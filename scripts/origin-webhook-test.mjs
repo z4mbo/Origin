@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Sends a sample Origin issue webhook, signed like the real ones, to check a receiver without a live workspace.
+ * Sends a sample Origin issue or project webhook, signed like the real ones, to check a receiver without a live
+ * workspace.
  *
  *   ORIGIN_ISSUE_WEBHOOK_SECRET='…' node scripts/origin-webhook-test.mjs --url http://127.0.0.1:8787/hook
  *   ORIGIN_ISSUE_WEBHOOK_SECRET='…' node scripts/origin-webhook-test.mjs --url http://127.0.0.1:8787/hook --event issue.updated
  *   ORIGIN_ISSUE_WEBHOOK_SECRET='…' node scripts/origin-webhook-test.mjs --url http://127.0.0.1:8787/hook --event project.created
  *
  * The secret (at least 32 characters) signs the body: X-Origin-Signature is `sha256=` plus the hex HMAC-SHA256 of the
- * raw body. Prints the payload and the HTTP status; never the secret. Needs Node 24 (it imports the TypeScript module
- * the server uses, lib/issue-webhook.ts).
+ * raw body. The issue samples show the Backlog fields: issue.created is a Backlog issue (status "Draft", statusLabel
+ * "Backlog", backlog true) and issue.updated moves it out of Backlog (changes.backlog { from: true, to: false }), the
+ * event a receiver should treat as new work. project.created and project.deleted carry `project` and `actor` instead of
+ * an issue, so they have no Backlog fields. Prints the payload and the HTTP status; never the secret. Needs Node 24 (it
+ * imports the TypeScript module the server uses, lib/issue-webhook.ts).
  */
 import { parseArgs } from "node:util";
 import { ISSUE_WEBHOOK_MIN_SECRET, ORIGIN_WEBHOOK_EVENTS, issueWebhookRequest, postIssueWebhook, sampleWebhookPayload } from "../lib/issue-webhook.ts";

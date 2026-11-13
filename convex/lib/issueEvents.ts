@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { globalIssueWebhook } from "../issueWebhooks";
 import { issueKey } from "../../lib/github-references";
+import { columnLabel, isDraftColumn } from "../../lib/origin-columns";
 import { issueWebhookChanges, issueWebhookPayload, type IssueWebhookChanges, type IssueWebhookEvent } from "../../lib/issue-webhook";
 import { queueGitHubSync } from "./githubIssueSync";
 import { liveProject } from "./permissions";
@@ -15,8 +16,10 @@ export async function webhookConfigured(ctx: MutationCtx, teamId: Id<"teams">) {
   return Boolean(globalIssueWebhook()) || Boolean(await ctx.db.query("issueWebhooks").withIndex("by_teamId", q => q.eq("teamId", teamId)).unique());
 }
 
-async function columnTitle(ctx: MutationCtx, columnId: Id<"columns">) {
-  return (await ctx.db.get(columnId))?.title ?? "";
+/** The issue's column as webhooks report it: stored title, the name the board shows, and whether it is Backlog (the draft column). */
+async function columnStatus(ctx: MutationCtx, columnId: Id<"columns">) {
+  const column = await ctx.db.get(columnId);
+  return column ? { status: column.title, statusLabel: columnLabel(column), backlog: isDraftColumn(column) } : { status: "", statusLabel: "", backlog: false };
 }
 
 async function schedule(ctx: MutationCtx, type: IssueWebhookEvent, task: Doc<"tasks">, changes: IssueWebhookChanges | null) {
@@ -29,7 +32,7 @@ async function schedule(ctx: MutationCtx, type: IssueWebhookEvent, task: Doc<"ta
     workspace: { id: team._id, name: team.name, slug: team.slug ?? team._id },
     project: { id: project._id, name: project.name, repoUrl: project.repoUrl },
     issue: {
-      id: task._id, key: issueKey(task._id), title: task.title, description: task.description, labels: task.labels, status: await columnTitle(ctx, task.columnId),
+      id: task._id, key: issueKey(task._id), title: task.title, description: task.description, labels: task.labels, ...await columnStatus(ctx, task.columnId),
       completed: task.done, assignee: task.assignedToEmail ? { email: task.assignedToEmail, name: task.assignedToName } : null, acceptanceCriteria: task.acceptanceCriteria,
       ...(task.delegateGrantId ? { delegate: { id: task.delegateGrantId, name: task.delegateName ?? "Agent" } } : {}),
     },
@@ -54,16 +57,15 @@ export async function issueDelegated(ctx: MutationCtx, before: Doc<"tasks">) {
 }
 
 /**
- * Sends issue.updated when the column title (status) or completion differs from `before`; other edits send nothing.
+ * Sends issue.updated when the column title (status), Backlog membership or completion differs from `before`; other
+ * edits send nothing. Every write that moves an issue between columns or completes it calls this.
  * Every call also queues the issue for GitHub issue sync, which compares content itself.
  */
 export async function issueStatusChanged(ctx: MutationCtx, before: Doc<"tasks">) {
   await queueGitHubSync(ctx, before._id);
   const after = await ctx.db.get(before._id);
   if (!after || (after.columnId === before.columnId && after.done === before.done)) return;
-  const changes = issueWebhookChanges(
-    { status: await columnTitle(ctx, before.columnId), completed: before.done },
-    { status: await columnTitle(ctx, after.columnId), completed: after.done },
-  );
+  const [from, to] = await Promise.all([columnStatus(ctx, before.columnId), columnStatus(ctx, after.columnId)]);
+  const changes = issueWebhookChanges({ ...from, completed: before.done }, { ...to, completed: after.done });
   if (changes) await schedule(ctx, "issue.updated", after, changes);
 }

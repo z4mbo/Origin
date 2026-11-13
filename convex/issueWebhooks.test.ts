@@ -71,7 +71,7 @@ describe("issue webhooks are queued by issue writes", () => {
       project: { id: f.projectId, name: "Web", repo: "acme/web" },
       issue: {
         id: taskId, key: expect.stringMatching(/^ORI-[0-9A-Z]{4}$/), title: "Import CSV", description: "", labels: ["Needs spec"],
-        url: `https://origin.test/${team!.slug}/issue/${payload.issue.key}`, status: "Backlog", completed: false,
+        url: `https://origin.test/${team!.slug}/issue/${payload.issue.key}`, status: "Backlog", statusLabel: "Backlog", backlog: true, completed: false,
         assignee: { email: f.member.email, name: "Member" }, acceptanceCriteria: [],
       },
       changes: null,
@@ -89,7 +89,7 @@ describe("issue webhooks are queued by issue writes", () => {
     await f.t.mutation(api.tasks.updateTask, { sessionToken: f.sessionToken, projectId: f.projectId, taskId, done: true });
     const updates = (await f.payloads()).slice(1);
     expect(updates.map(p => [p.type, p.changes, p.issue.status, p.issue.completed])).toEqual([
-      ["issue.updated", { status: { from: "Backlog", to: "Todo" } }, "Todo", false],
+      ["issue.updated", { status: { from: "Backlog", to: "Todo" }, backlog: { from: true, to: false } }, "Todo", false],
       ["issue.updated", { completed: { from: false, to: true } }, "Todo", true],
     ]);
     expect(updates[0]!.issue.title).toBe("Typo fixed");
@@ -104,7 +104,7 @@ describe("issue webhooks are queued by issue writes", () => {
     await f.t.mutation(api.mcp.moveIssue, { token, issueId: created.id, completed: true });
     const [first, ...rest] = await f.payloads();
     expect(first!.issue).toMatchObject({ description: "Spec", labels: [], acceptanceCriteria: [{ text: "Works", checked: false }], assignee: { email: "owner@hooks.test" } });
-    expect(rest.map(p => p.changes)).toEqual([{ status: { from: "Backlog", to: "In progress" } }, { completed: { from: false, to: true } }]);
+    expect(rest.map(p => p.changes)).toEqual([{ status: { from: "Backlog", to: "In progress" }, backlog: { from: true, to: false } }, { completed: { from: false, to: true } }]);
   });
 
   test("a merged pull request that completes the issue sends one update with both changes", async () => {
@@ -118,6 +118,91 @@ describe("issue webhooks are queued by issue writes", () => {
     expect(updates).toHaveLength(1);
     expect(updates[0]!.changes).toEqual({ status: { from: "In progress", to: "Done" }, completed: { from: false, to: true } });
     expect(updates[0]!.issue.id).toBe(taskId);
+  });
+});
+
+describe("issue webhooks carry an explicit Backlog flag", () => {
+  /** Live boards still title their Backlog column "Draft"; the board shows it as "Backlog". */
+  async function draftTitled() {
+    const f = await fixture();
+    const backlog = f.column("Backlog");
+    await f.t.run(ctx => ctx.db.patch(backlog, { title: "Draft" }));
+    return { ...f, backlog };
+  }
+
+  test("issue.created is backlog true in the Backlog column, with statusLabel Backlog for a column titled Draft", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    await f.t.mutation(api.tasks.createTask, { sessionToken: f.sessionToken, projectId: f.projectId, title: "Rough idea", priority: "medium" });
+    await f.t.mutation(api.tasks.createTask, { sessionToken: f.sessionToken, projectId: f.projectId, columnId: f.column("Todo"), title: "Real work", priority: "medium" });
+    expect((await f.payloads()).map(p => [p.type, p.issue.title, p.issue.status, p.issue.statusLabel, p.issue.backlog])).toEqual([
+      ["issue.created", "Rough idea", "Draft", "Backlog", true],
+      ["issue.created", "Real work", "Todo", "Todo", false],
+    ]);
+  });
+
+  test("moving out of and back into Backlog sends changes.backlog; moves between other columns do not", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    const taskId = await f.t.mutation(api.tasks.createTask, { sessionToken: f.sessionToken, projectId: f.projectId, title: "Idea", priority: "medium" });
+    await f.t.mutation(api.tasks.moveTask, { sessionToken: f.sessionToken, projectId: f.projectId, taskId, columnId: f.column("Todo") });
+    await f.t.mutation(api.tasks.moveTask, { sessionToken: f.sessionToken, projectId: f.projectId, taskId, columnId: f.column("In progress") });
+    await f.t.mutation(api.tasks.moveTask, { sessionToken: f.sessionToken, projectId: f.projectId, taskId, columnId: f.backlog });
+    const updates = (await f.payloads()).filter(p => p.type === "issue.updated");
+    expect(updates.map(p => [p.changes, p.issue.status, p.issue.statusLabel, p.issue.backlog])).toEqual([
+      [{ status: { from: "Draft", to: "Todo" }, backlog: { from: true, to: false } }, "Todo", "Todo", false],
+      [{ status: { from: "Todo", to: "In progress" } }, "In progress", "In progress", false],
+      [{ status: { from: "In progress", to: "Draft" }, backlog: { from: false, to: true } }, "Draft", "Backlog", true],
+    ]);
+  });
+
+  test("leaving a renamed Backlog column is reported even when the title would not tell", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    await f.t.run(ctx => ctx.db.patch(f.backlog, { title: "Ideas" }));
+    const taskId = await f.t.mutation(api.tasks.createTask, { sessionToken: f.sessionToken, projectId: f.projectId, title: "Idea", priority: "medium" });
+    await f.t.mutation(api.tasks.moveTask, { sessionToken: f.sessionToken, projectId: f.projectId, taskId, columnId: f.column("Todo") });
+    const [created, updated] = await f.payloads();
+    expect(created!.issue).toMatchObject({ status: "Ideas", statusLabel: "Ideas", backlog: true });
+    expect(updated!.changes).toEqual({ status: { from: "Ideas", to: "Todo" }, backlog: { from: true, to: false } });
+  });
+
+  test("MCP moves send changes.backlog in both directions", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    const token = (await f.t.mutation(api.mcp.createToken, { sessionToken: f.sessionToken, teamId: f.teamId, name: "bot", write: true })).token;
+    const created = JSON.parse(await f.t.mutation(api.mcp.createIssue, { token, project: "Web", title: "From the bot" }));
+    await f.t.mutation(api.mcp.moveIssue, { token, issueId: created.id, column: "Todo" });
+    await f.t.mutation(api.mcp.moveIssue, { token, issueId: created.id, column: "In progress" });
+    await f.t.mutation(api.mcp.moveIssue, { token, issueId: created.id, column: "backlog" });
+    const [first, ...rest] = await f.payloads();
+    expect(first!.issue).toMatchObject({ status: "Draft", statusLabel: "Backlog", backlog: true });
+    expect(rest.map(p => p.changes?.backlog ?? null)).toEqual([{ from: true, to: false }, null, { from: false, to: true }]);
+  });
+
+  test("connector creates and completions send events with the Backlog flag", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    const grant = await f.t.mutation(api.connectors.createGrant, { sessionToken: f.sessionToken, teamId: f.teamId, name: "Connector", write: true });
+    const change = { kind: "create_issue" as const, projectId: f.projectId, title: "Connector idea", priority: "medium" as const, assignedToEmail: f.owner.email, dueDate: "2027-01-01" };
+    await f.t.mutation(api.connectors.write, { token: grant.token, requestId: "backlog-create-1", change });
+    const todo = JSON.parse(await f.t.mutation(api.connectors.write, { token: grant.token, requestId: "backlog-create-2", change: { ...change, title: "Connector work", columnId: f.column("Todo") } })).id as Id<"tasks">;
+    await f.t.mutation(api.connectors.write, { token: grant.token, requestId: "backlog-done-1", change: { kind: "update_issue", projectId: f.projectId, taskId: todo, done: true } });
+    expect((await f.payloads()).map(p => [p.type, p.issue.title, p.issue.backlog, p.changes])).toEqual([
+      ["issue.created", "Connector idea", true, null],
+      ["issue.created", "Connector work", false, null],
+      ["issue.updated", "Connector work", false, { completed: { from: false, to: true } }],
+    ]);
+  });
+
+  test("deleting a column moves its issues out of Backlog with an event", async () => {
+    useGlobalWebhook();
+    const f = await draftTitled();
+    const extra = await f.t.mutation(api.tasks.createColumn, { sessionToken: f.sessionToken, projectId: f.projectId, title: "Parking" });
+    const taskId = await f.t.mutation(api.tasks.createTask, { sessionToken: f.sessionToken, projectId: f.projectId, columnId: extra, title: "Parked", priority: "medium" });
+    await f.t.mutation(api.tasks.deleteColumn, { sessionToken: f.sessionToken, projectId: f.projectId, columnId: extra, moveToColumnId: f.backlog });
+    const updated = (await f.payloads()).find(p => p.type === "issue.updated" && p.issue.id === taskId);
+    expect(updated?.changes).toEqual({ status: { from: "Parking", to: "Draft" }, backlog: { from: false, to: true } });
   });
 });
 
