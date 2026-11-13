@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { canEdit, projectMember, requireMember, requireTeamMember, visibleProjectRows } from "./lib/permissions";
+import { canEdit, projectMember, requireMember, requireTeamMember, visibleProjectRows, liveProject } from "./lib/permissions";
 import { isDoneColumn, isDraftColumn } from "./lib/columns";
 import { createTaskRecord } from "./tasks";
 import { issuesForKey } from "../lib/issue-route";
@@ -25,7 +25,7 @@ export const resolve = query({
     const id = args.taskId ? ctx.db.normalizeId("tasks", args.taskId) : null;
     if (id) {
       const task = await ctx.db.get(id);
-      const project = task && await ctx.db.get(task.projectId);
+      const project = task && await liveProject(ctx, task.projectId);
       if (task && project?.teamId === args.teamId && await projectMember(ctx, project, user)) return { status: "found" as const, projectId: task.projectId, taskId: task._id };
       return { status: "missing" as const };
     }
@@ -54,7 +54,7 @@ export const subIssues = query({
     for (const relation of await ctx.db.query("taskRelations").withIndex("by_fromTaskId", q => q.eq("fromTaskId", parent._id)).take(30)) {
       if (relation.kind !== "parent" || relation.teamId !== project.teamId) continue;
       const child = await ctx.db.get(relation.toTaskId);
-      const target = child && (child.projectId === project._id ? project : await ctx.db.get(child.projectId));
+      const target = child && (child.projectId === project._id ? project : await liveProject(ctx, child.projectId));
       if (!child || !target || target.teamId !== project.teamId || !await projectMember(ctx, target, user)) continue;
       const column = await ctx.db.get(child.columnId);
       rows.push({

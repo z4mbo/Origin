@@ -40,7 +40,9 @@ async function fixture() {
   const sessionToken = people.owner.session;
   const deliveries = async () => (await t.run(ctx => ctx.db.system.query("_scheduled_functions").collect()))
     .filter(job => job.name.includes("issueWebhooks") && job.state.kind === "pending")
-    .map(job => job.args[0] as { teamId: Id<"teams">; event: "issue.created" | "issue.updated"; deliveryId: string; body: string; attempt?: number });
+    .map(job => job.args[0] as { teamId: Id<"teams">; event: "issue.created" | "issue.updated"; deliveryId: string; body: string; attempt?: number })
+    // project.created from the fixture's own project is covered in projectWebhooks.test.ts.
+    .filter(job => job.event.startsWith("issue."));
   const payloads = async () => (await deliveries()).map(job => JSON.parse(job.body) as IssueWebhookPayload);
   return { t, ...people, teamId, projectId, column, sessionToken, deliveries, payloads };
 }

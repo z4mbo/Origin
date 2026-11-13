@@ -2,7 +2,7 @@ import { paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { projectMember, requireMember, requireTeamMember } from "./lib/permissions";
+import { projectMember, requireMember, requireTeamMember, liveProject } from "./lib/permissions";
 import { priorityValidator, projectIconTypeValidator } from "./lib/validators";
 import { validDay } from "./lib/features";
 
@@ -20,7 +20,7 @@ export const list = query({
   returns: v.object({ page: v.array(row), isDone: v.boolean(), continueCursor: v.string() }),
   handler: async (ctx, a) => {
     const { user } = await requireTeamMember(ctx, a.teamId, a.sessionToken);
-    if (a.projectId && (await ctx.db.get(a.projectId))?.teamId !== a.teamId) throw new ConvexError("Project not found");
+    if (a.projectId && (await liveProject(ctx, a.projectId))?.teamId !== a.teamId) throw new ConvexError("Project not found");
     if (a.projectId) await requireMember(ctx, a.projectId, a.sessionToken);
     const tasks = ctx.db.query("tasks");
     const query = a.projectId
@@ -96,7 +96,7 @@ export const backfill = internalMutation({
   handler: async (ctx, args) => {
     const batch = await ctx.db.query("tasks").paginate({ cursor: args.cursor, numItems: 100 });
     for (const task of batch.page) {
-      const project = await ctx.db.get(task.projectId);
+      const project = await liveProject(ctx, task.projectId);
       if (project?.teamId && task.teamId !== project.teamId) await ctx.db.patch(task._id, { teamId: project.teamId });
     }
     if (!batch.isDone) await ctx.scheduler.runAfter(0, internal.inbox.backfill, { cursor: batch.continueCursor });

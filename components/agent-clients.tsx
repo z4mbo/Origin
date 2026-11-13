@@ -50,7 +50,7 @@ export function clientSetup(client: Client, url: string, token?: string): Setup 
     case "Webhook": return {
       steps: [
         "For bots that don't speak MCP. Settings → Workspace → Issue webhook: paste an HTTPS URL. Origin signs each POST.",
-        "Events: issue.created, issue.updated (status or completion) and issue.delegated (an agent was put on or taken off an issue).",
+        "Events: issue.created, issue.updated (status or completion), issue.delegated (an agent was put on or taken off an issue), project.created and project.deleted.",
         "Reply through MCP or the origin CLI with a token. A delegated issue is a request to look, not to build: refine it with the owner in comments first, and build only after they confirm.",
       ],
     };

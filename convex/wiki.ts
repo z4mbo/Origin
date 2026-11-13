@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { canEdit, requireMember, touchProject } from "./lib/permissions";
+import { canEdit, requireMember, touchProject, liveProject } from "./lib/permissions";
 import { wikiTypeValidator } from "./lib/validators";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
@@ -36,7 +36,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     await requireEditor(ctx, args.projectId, args.sessionToken);
     if (args.content.length > 60000 || args.tags.length > 30) throw new ConvexError("Document is too large");
-    const project = await ctx.db.get(args.projectId);
+    const project = await liveProject(ctx, args.projectId);
     const now = Date.now();
     const id = await ctx.db.insert("wikiPages", {
       projectId: args.projectId,

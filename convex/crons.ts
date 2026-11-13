@@ -13,5 +13,6 @@ crons.interval("expire rate limits, leases and GitHub OAuth states", { minutes: 
 crons.interval("expire GitHub deliveries", { hours: 24 }, internal.taskPRs.cleanup, {});
 crons.interval("backfill PR repository index", { minutes: 2 }, internal.taskPRs.backfillRepositories, {});
 crons.interval("resume interrupted workspace deletions", { minutes: 15 }, internal.workspaceDeletion.resume, {});
+crons.interval("resume interrupted project deletions", { minutes: 15 }, internal.projectDeletion.resume, {});
 crons.daily("expire deleted-workspace notices", { hourUTC: 3, minuteUTC: 30 }, internal.workspaceDeletion.expireNotices, {});
 export default crons;

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { action, internalAction, internalMutation, internalQuery, mutation, query, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canEdit, getActiveTeamMember, projectMember, requireTeamAdmin, requireTeamMember } from "./lib/permissions";
+import { canEdit, getActiveTeamMember, projectMember, requireTeamAdmin, requireTeamMember, liveProject, isDeleting } from "./lib/permissions";
 import { requireUser } from "./lib/auth";
 import { seal, sealingConfigured, SEALING_MISSING, unseal } from "./lib/sealing";
 import {
@@ -75,7 +75,7 @@ export const projectAccess = internalQuery({
   args: { sessionToken: v.string(), projectId: v.id("projects") },
   handler: async (ctx, a): Promise<ProjectAccess> => {
     const user = await requireUser(ctx, a.sessionToken);
-    const project = await ctx.db.get(a.projectId);
+    const project = await liveProject(ctx, a.projectId);
     if (!project) throw new ConvexError("Project not found");
     const member = await projectMember(ctx, project, user);
     if (!member) throw new ConvexError("You don't have access to this project");
@@ -87,7 +87,7 @@ export const projectAccess = internalQuery({
 export const projectView = internalQuery({
   args: { projectId: v.id("projects") },
   handler: async (ctx, a): Promise<ProjectView> => {
-    const project = await ctx.db.get(a.projectId);
+    const project = await liveProject(ctx, a.projectId);
     if (!project) throw new ConvexError("Project not found");
     const { _id, teamId, name, description, repoUrl, status, githubWorkspaceAccess, githubRepoVisibility } = project;
     return { _id, teamId, name, description, repoUrl, status, githubWorkspaceAccess, githubRepoVisibility };
@@ -118,7 +118,7 @@ export const store = internalMutation({
     await ctx.db.patch(a.teamId, { githubLogin: a.connectorLogin, githubConnectedBy: a.sharedBy, githubAutoCreate: team?.githubAutoCreate ?? true });
     const waiting = await ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", a.teamId)).take(500);
     for (const project of waiting) {
-      if (!project.repoUrl && project.status === "active" && project.githubRepoState === "awaiting_connection") await ctx.scheduler.runAfter(0, internal.teamGitHub.autoCreate, { projectId: project._id });
+      if (!project.repoUrl && project.status === "active" && !isDeleting(project) && project.githubRepoState === "awaiting_connection") await ctx.scheduler.runAfter(0, internal.teamGitHub.autoCreate, { projectId: project._id });
     }
     await retryPendingMirrorsForTeam(ctx, a.teamId);
     return null;
@@ -310,7 +310,7 @@ export const chooseAccount = action({
 export const beginRepository = internalMutation({
   args: { projectId: v.id("projects"), visibility: v.optional(repoVisibility) },
   handler: async (ctx, a): Promise<{ state: "ready"; repoUrl: string } | { state: "working" } | { state: "start"; teamId: Id<"teams">; name: string; description: string; visibility: "private" | "public" }> => {
-    const project = await ctx.db.get(a.projectId);
+    const project = await liveProject(ctx, a.projectId);
     if (!project?.teamId) throw new ConvexError("Project not found");
     if (project.repoUrl) return { state: "ready", repoUrl: project.repoUrl };
     if (project.status && project.status !== "active") throw new ConvexError("Reactivate the project before creating a repository");

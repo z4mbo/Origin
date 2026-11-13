@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireChat, requireChatWriter, type ChatAttachment, type ChatViewer } from "./lib/chatAccess";
-import { projectMember } from "./lib/permissions";
+import { projectMember, liveProject } from "./lib/permissions";
 import { issueUpload } from "./lib/storage";
 import { requireRequestBudget } from "./lib/rateLimit";
 
@@ -91,7 +91,7 @@ async function activeMembers(ctx: Ctx, teamId: Id<"teams">) {
 
 async function resolveReference(ctx: MutationCtx, viewer: ChatViewer, input: { type: string; id: string; projectId: string }, members: { userId: Id<"users">; email: string }[], notify: Id<"users">[]): Promise<Reference> {
   const projectId = ctx.db.normalizeId("projects", input.projectId);
-  const project = projectId ? await ctx.db.get(projectId) : null;
+  const project = projectId ? await liveProject(ctx, projectId) : null;
   if (!project || !await projectMember(ctx, project, viewer.user)) throw new ConvexError("You don't have access to this project");
   if (project.teamId !== viewer.teamId) throw new ConvexError("Reference must belong to this workspace");
   if (input.type === "project") return { type: "project", projectId: project._id, id: project._id, label: project.name };
@@ -270,12 +270,12 @@ export const file = query({
     if (!row) return null;
     const file = JSON.parse(row.payload) as ChatAttachment;
     if (file.projectId) {
-      const project = await ctx.db.get(file.projectId);
+      const project = await liveProject(ctx, file.projectId);
       if (!project || project.teamId !== viewer.teamId || !await projectMember(ctx, project, viewer.user)) return null;
     } else {
       // Issue attachments uploaded before files carried their project are tied to it through taskAssets.
       for (const asset of await ctx.db.query("taskAssets").withIndex("by_localFileId", q => q.eq("localFileId", a.fileId)).take(100)) {
-        const project = await ctx.db.get(asset.projectId);
+        const project = await liveProject(ctx, asset.projectId);
         if (project?.teamId !== viewer.teamId || !await projectMember(ctx, project, viewer.user)) return null;
       }
     }

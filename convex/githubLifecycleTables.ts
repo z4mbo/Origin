@@ -28,5 +28,5 @@ export const githubLifecycleTables = {
     leaseUntil: v.optional(v.number()), error: v.optional(v.string()),
     deleted: v.optional(v.object({ repoUrl: v.string(), number: v.number() })),
     updatedAt: v.number(),
-  }).index("by_taskId", ["taskId"]).index("by_pending_and_nextAt", ["pending", "nextAt"]),
+  }).index("by_taskId", ["taskId"]).index("by_pending_and_nextAt", ["pending", "nextAt"]).index("by_projectId", ["projectId"]),
 };

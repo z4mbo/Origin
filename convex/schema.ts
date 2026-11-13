@@ -62,6 +62,7 @@ export default defineSchema({
   storageUploadIntents: defineTable({ tokenHash: v.string(), sessionId: v.id("sessions"), userId: v.id("users"), target: uploadTarget, state: v.union(v.literal("issued"), v.literal("uploading"), v.literal("complete")), expiresAt: v.number(), storageId: v.optional(v.id("_storage")) }).index("by_tokenHash", ["tokenHash"]).index("by_expiresAt", ["expiresAt"]).index("by_userId_and_expiresAt", ["userId", "expiresAt"]),
   notifications: defineTable({ teamId: v.id("teams"), userId: v.id("users"), actorId: v.id("users"), kind: v.union(v.literal("assignment"), v.literal("comment"), v.literal("mention"), v.literal("digest"), v.literal("lead")), eventId: v.string(), digestId: v.optional(v.id("standupDigests")), leadId: v.optional(v.id("pipelineLeads")), projectId: v.optional(v.id("projects")), taskId: v.optional(v.id("tasks")), messageId: v.optional(v.string()), conversation: v.optional(v.string()), agentThreadId: v.optional(v.id("agentThreads")), preview: v.optional(v.string()), read: v.boolean(), snoozedUntil: v.optional(v.number()), createdAt: v.number() })
     .index("by_teamId", ["teamId"])
+    .index("by_projectId", ["projectId"])
     .index("by_user_team", ["userId", "teamId"])
     .index("by_user_team_read", ["userId", "teamId", "read"])
     .index("by_user_event", ["userId", "eventId"])
@@ -69,6 +70,7 @@ export default defineSchema({
   projectPresence: defineTable({ teamId: v.id("teams"), userId: v.id("users"), clientId: v.string(), projectId: v.optional(v.id("projects")), sequence: v.number(), updatedAt: v.number() })
     .index("by_team_user_client", ["teamId", "userId", "clientId"])
     .index("by_team_updatedAt", ["teamId", "updatedAt"])
+    .index("by_projectId", ["projectId"])
     .index("by_updatedAt", ["updatedAt"]),
   authAttempts: defineTable({ key: v.string(), count: v.number(), expiresAt: v.number() }).index("by_key", ["key"]),
   canvases: defineTable({ teamId: v.id("teams"), projectId: v.id("projects"), name: v.string(), kind: v.optional(canvasKindValidator), archived: v.boolean(), pages: v.optional(v.array(v.object({ id: v.string(), name: v.string(), guides: v.optional(v.array(v.object({ axis: v.union(v.literal("x"), v.literal("y")), at: v.number() }))) }))), drawingElementCount: v.optional(v.number()), drawingBytes: v.optional(v.number()), createdAt: v.number(), updatedAt: v.number() }).index("by_project", ["projectId", "archived"]),
@@ -200,9 +202,14 @@ export default defineSchema({
     iconValue: v.optional(v.string()),
     iconStorageId: v.optional(v.id("_storage")),
     ownerEmail: v.string(),
+    /** Set when an admin deletes the project: it is hidden everywhere and convex/projectDeletion.ts removes its rows. */
+    deletingAt: v.optional(v.number()),
+    /** Who deleted the project, for the project.deleted event and support. */
+    deletedBy: v.optional(v.object({ userId: v.id("users"), name: v.string(), email: v.string() })),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index("by_deletingAt", ["deletingAt"])
     .index("by_githubRepoState", ["githubRepoState"])
     .index("by_repoUrl", ["repoUrl"])
     .index("by_owner", ["ownerEmail"])

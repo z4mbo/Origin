@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canEdit, changeOpenIssueCount, getActiveTeamMember, requireAdmin, requireMember, touchProject } from "./lib/permissions";
+import { canEdit, changeOpenIssueCount, getActiveTeamMember, requireAdmin, requireMember, touchProject, liveProject, isDeleting } from "./lib/permissions";
 import { recordCompletion } from "./lib/completions";
 import { agentsTables } from "./agentsTables";
 import { internal } from "./_generated/api";
@@ -144,7 +144,7 @@ export const humanContext = internalMutation({
  * Out-of-order and duplicate deliveries are rejected by GitHub's updated_at and the per-row sync sequence; merged is final.
  */
 export async function applySnapshot(ctx: MutationCtx, row: Doc<"taskPullRequests">, s: typeof snapshot.type, sequence: number) {
-  const project = await ctx.db.get(row.projectId), task = await ctx.db.get(row.taskId);
+  const project = await liveProject(ctx, row.projectId), task = await ctx.db.get(row.taskId);
   if (!project || !task || task.projectId !== project._id || repoName(project.repoUrl) !== repoName(row.url.split("/pull/")[0])) return false;
   if (s.url !== row.url || s.number !== row.number || s.branch !== row.branch || !/^[a-f0-9]{40,64}$/i.test(s.headSha) || !/^[a-f0-9]{40,64}$/i.test(s.baseSha) || !Number.isFinite(s.githubUpdatedAt)) throw new ConvexError("Invalid PR snapshot");
   if (sequence < Math.max(row.appliedSequence ?? 0, row.syncSequence ?? 0) || s.githubUpdatedAt < (row.githubUpdatedAt ?? 0) || (row.state === "merged" && s.state !== "merged")) return false;
@@ -185,7 +185,7 @@ export const finalize = internalMutation({
     const access = await requireMember(ctx, a.projectId, a.sessionToken);
     if (!canEdit(access.member)) throw new ConvexError("You have view-only access");
     const requesterUserId = access.user._id;
-    const task = await ctx.db.get(a.taskId), project = await ctx.db.get(a.projectId);
+    const task = await ctx.db.get(a.taskId), project = await liveProject(ctx, a.projectId);
     if (!task || task.projectId !== a.projectId || !project?.githubWorkspaceAccess || repoName(project.repoUrl) !== repoName(a.snapshot.url.split("/pull/")[0])) throw new ConvexError("This issue belongs to another repository");
     let old = await ctx.db.query("taskPullRequests").withIndex("by_projectId_and_number", q => q.eq("projectId", a.projectId).eq("number", a.snapshot.number)).unique();
     if (old && (old.taskId !== task._id || old.url !== a.snapshot.url || old.branch !== a.snapshot.branch)) throw new ConvexError("PR linkage collision");
@@ -225,7 +225,7 @@ export const eventTargets = internalQuery({
     candidates.push(...legacy.filter(row => a.numbers.includes(row.number) || Boolean(a.headSha && row.headSha === a.headSha)));
     for (const row of candidates) {
       if (result.some(r => r._id === row._id) || repoName(row.url.split("/pull/")[0]) !== repoName(a.repoUrl)) continue;
-      const project = await ctx.db.get(row.projectId);
+      const project = await liveProject(ctx, row.projectId);
       if (project && repoName(project.repoUrl) === repoName(a.repoUrl)) result.push(row);
     }
     return result;
@@ -284,7 +284,7 @@ export const repositoryProjects = internalQuery({
     let rows = await ctx.db.query("projects").withIndex("by_repoUrl", q => q.eq("repoUrl", a.repoUrl)).take(50);
     // Repository URLs keep the casing people typed; GitHub sends its canonical casing.
     if (!rows.length) rows = (await ctx.db.query("projects").withIndex("by_repoUrl", q => q.gte("repoUrl", "https://github.com/")).take(2000)).filter(p => repoName(p.repoUrl) === repository);
-    return rows.filter(p => p.status === "active" && p.githubWorkspaceAccess && repoName(p.repoUrl) === repository).slice(0, 20).map(p => p._id);
+    return rows.filter(p => p.status === "active" && !isDeleting(p) && p.githubWorkspaceAccess && repoName(p.repoUrl) === repository).slice(0, 20).map(p => p._id);
   },
 });
 
@@ -311,7 +311,7 @@ async function resolveReferences(ctx: MutationCtx, project: Doc<"projects">, ref
 }
 
 async function allowedProject(ctx: MutationCtx, projectId: Id<"projects">, repository: string) {
-  const project = await ctx.db.get(projectId);
+  const project = await liveProject(ctx, projectId);
   return project && project.status === "active" && project.githubWorkspaceAccess && repoName(project.repoUrl) === repository ? project : null;
 }
 

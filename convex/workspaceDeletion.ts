@@ -32,7 +32,11 @@ export async function startWorkspaceDeletion(ctx: MutationCtx, team: Doc<"teams"
   await ctx.scheduler.runAfter(0, internal.workspaceDeletion.purge, { teamId: team._id });
 }
 
-function purger(ctx: MutationCtx, teamId: Id<"teams">) {
+/** Which storage scopes the purge owns: a file is deleted once every scope that admitted it is owned (or gone). */
+export type Owns = (scope: StorageScope) => Promise<boolean> | boolean;
+
+/** Bounded deletes for one scheduled step, shared by workspace and project deletion (convex/projectDeletion.ts). */
+export function purger(ctx: MutationCtx, owns: Owns) {
   let left = WRITES_PER_STEP;
 
   /** Deletes every row `next` returns, children first; false once this step's write budget is spent. */
@@ -51,20 +55,13 @@ function purger(ctx: MutationCtx, teamId: Id<"teams">) {
     }
   }
 
-  async function inWorkspace(scope: StorageScope) {
-    if (scope.kind === "workspace") return scope.teamId === teamId;
-    if (scope.kind === "user") return false;
-    const project = await ctx.db.get(scope.projectId);
-    return !project || project.teamId === teamId;
-  }
-
-  /** Drops this workspace's claims on a file, and the file itself once nothing outside the workspace uses it. */
-  async function releaseFile(storageId: Id<"_storage"> | undefined) {
+  /** Drops the purge's claims on a file, and the file itself once nothing outside what is being deleted uses it. */
+  async function releaseFile(storageId: Id<"_storage"> | undefined, alsoOwns?: Owns) {
     if (!storageId) return;
     const admissions = await ctx.db.query("storageAdmissions").withIndex("by_storageId_and_scopeKey", q => q.eq("storageId", storageId)).take(50);
     let sharedElsewhere = admissions.length === 50;
     for (const admission of admissions) {
-      if (await inWorkspace(admission.scope)) { await ctx.db.delete(admission._id); left -= 1; }
+      if (await owns(admission.scope) || await alsoOwns?.(admission.scope)) { await ctx.db.delete(admission._id); left -= 1; }
       else sharedElsewhere = true;
     }
     if (sharedElsewhere) return;
@@ -78,23 +75,57 @@ function purger(ctx: MutationCtx, teamId: Id<"teams">) {
     left -= 1;
   }
 
-  return { drain, releaseFile };
+  /** One write that must happen with the row before it (like releaseFile); it may run a step slightly over budget. */
+  async function write(change: () => Promise<void>) {
+    await change();
+    left -= 1;
+  }
+
+  return { drain, releaseFile, write };
 }
 
-type Purger = ReturnType<typeof purger>;
+export type Purger = ReturnType<typeof purger>;
 
-async function all(steps: Array<() => Promise<boolean>>) {
+function inWorkspace(ctx: MutationCtx, teamId: Id<"teams">): Owns {
+  return async scope => {
+    if (scope.kind === "workspace") return scope.teamId === teamId;
+    if (scope.kind === "user") return false;
+    const project = await ctx.db.get(scope.projectId);
+    return !project || project.teamId === teamId;
+  };
+}
+
+export async function all(steps: Array<() => Promise<boolean>>) {
   for (const step of steps) if (!await step()) return false;
   return true;
 }
 
-function taskSteps(ctx: MutationCtx, { drain }: Purger, task: Doc<"tasks">) {
+/**
+ * Issue attachments are workspace-channel chat files (convex/workspaceChat.ts beginUpload) tied to the issue through
+ * taskAssets.localFileId. The file goes with the issue unless an issue in another project still links it.
+ */
+async function releaseAttachment(ctx: MutationCtx, { releaseFile, write }: Purger, project: Doc<"projects">, asset: Doc<"taskAssets">) {
+  const teamId = project.teamId, fileId = asset.localFileId;
+  if (!teamId || !fileId) return;
+  const linked = await ctx.db.query("taskAssets").withIndex("by_localFileId", q => q.eq("localFileId", fileId)).take(20);
+  if (linked.some(other => other.projectId !== project._id)) return;
+  const file = await ctx.db.query("teamChatFiles").withIndex("by_team_conversation_file", q => q.eq("teamId", teamId).eq("conversation", "").eq("fileId", fileId)).first();
+  if (!file) return;
+  await write(() => ctx.db.delete(file._id));
+  // Older attachments were admitted to the workspace rather than the project; this file is the issue's either way.
+  await releaseFile(file.storageId, scope => scope.kind === "workspace" && scope.teamId === teamId);
+}
+
+function taskSteps(ctx: MutationCtx, purge: Purger, project: Doc<"projects">, task: Doc<"tasks">) {
+  const { drain } = purge;
   return all([
     () => drain(n => ctx.db.query("taskRelations").withIndex("by_fromTaskId", q => q.eq("fromTaskId", task._id)).take(n)),
     () => drain(n => ctx.db.query("taskRelations").withIndex("by_toTaskId", q => q.eq("toTaskId", task._id)).take(n)),
     () => drain(n => ctx.db.query("taskComments").withIndex("by_task", q => q.eq("taskId", task._id)).take(n)),
-    () => drain(n => ctx.db.query("taskAssets").withIndex("by_task", q => q.eq("taskId", task._id)).take(n)),
+    () => drain(n => ctx.db.query("taskAssets").withIndex("by_task", q => q.eq("taskId", task._id)).take(n), undefined, asset => releaseAttachment(ctx, purge, project, asset)),
     () => drain(n => ctx.db.query("taskPullRequests").withIndex("by_taskId", q => q.eq("taskId", task._id)).take(n)),
+    () => drain(n => ctx.db.query("githubIssueMirrors").withIndex("by_taskId", q => q.eq("taskId", task._id)).take(n)),
+    () => drain(n => ctx.db.query("githubIssueWork").withIndex("by_taskId", q => q.eq("taskId", task._id)).take(n)),
     () => drain(n => ctx.db.query("taskCompletions").withIndex("by_taskId", q => q.eq("taskId", task._id)).take(n)),
     () => drain(n => ctx.db.query("designLinks").withIndex("by_task", q => q.eq("taskId", task._id)).take(n)),
     () => drain(n => ctx.db.query("issueActivity").withIndex("by_taskId_and_createdAt", q => q.eq("taskId", task._id)).take(n)),
@@ -115,14 +146,38 @@ function canvasSteps(ctx: MutationCtx, { drain, releaseFile }: Purger, canvas: D
   ]);
 }
 
-function projectSteps(ctx: MutationCtx, purge: Purger, project: Doc<"projects">) {
+function agentSteps(ctx: MutationCtx, purge: Purger, agent: Doc<"workspaceAgents">) {
+  const { drain } = purge;
+  return all([
+    () => drain(n => ctx.db.query("agentThreads").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n), thread => threadSteps(ctx, purge, thread)),
+    () => drain(n => ctx.db.query("projectAgents").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
+    () => drain(n => ctx.db.query("agentRendererBots").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
+    () => drain(n => ctx.db.query("agentBudgets").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
+    () => drain(n => ctx.db.query("budgetSpend").withIndex("by_agentId_and_month", q => q.eq("agentId", agent._id)).take(n)),
+  ]);
+}
+
+function threadSteps(ctx: MutationCtx, { drain }: Purger, thread: Doc<"agentThreads">) {
+  return all([
+    () => drain(n => ctx.db.query("agentThreadMessages").withIndex("by_threadId_and_seq", q => q.eq("threadId", thread._id)).take(n)),
+    () => drain(n => ctx.db.query("agentThreadReads").withIndex("by_threadId_and_userId", q => q.eq("threadId", thread._id)).take(n)),
+  ]);
+}
+
+/** Every row a project owns, children first. GitHub work goes first so nothing is mirrored once deletion starts. */
+export function projectSteps(ctx: MutationCtx, purge: Purger, project: Doc<"projects">) {
   const { drain, releaseFile } = purge;
   const projectId = project._id;
   return all([
+    () => drain(n => ctx.db.query("githubRepoJobs").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("githubIssueMirrors").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("githubIssueWork").withIndex("by_projectId_and_updatedAt", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("githubIssueReads").withIndex("by_projectId_and_repoUrl_and_number", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("githubProjectConnections").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("members").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
-    () => drain(n => ctx.db.query("tasks").withIndex("by_project", q => q.eq("projectId", projectId)).take(n), task => taskSteps(ctx, purge, task)),
+    () => drain(n => ctx.db.query("tasks").withIndex("by_project", q => q.eq("projectId", projectId)).take(n), task => taskSteps(ctx, purge, project, task)),
     () => drain(n => ctx.db.query("taskComments").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
-    () => drain(n => ctx.db.query("taskAssets").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("taskAssets").withIndex("by_project", q => q.eq("projectId", projectId)).take(n), undefined, asset => releaseAttachment(ctx, purge, project, asset)),
     () => drain(n => ctx.db.query("taskPullRequests").withIndex("by_projectId_and_number", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("taskCompletions").withIndex("by_projectId_and_completedAt", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("columns").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
@@ -158,7 +213,6 @@ function projectSteps(ctx: MutationCtx, purge: Purger, project: Doc<"projects">)
     () => drain(n => ctx.db.query("shipTargets").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("brandKits").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("pulseDays").withIndex("by_projectId_and_day", q => q.eq("projectId", projectId)).take(n)),
-    () => drain(n => ctx.db.query("githubRepoJobs").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("githubBranchProtections").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("sharedKeys").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("commits").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
@@ -170,10 +224,17 @@ function projectSteps(ctx: MutationCtx, purge: Purger, project: Doc<"projects">)
     () => drain(n => ctx.db.query("chatMessages").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("callParticipants").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
     () => drain(n => ctx.db.query("callSignals").withIndex("by_project", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("notifications").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("projectPresence").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("savedViews").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("drawingBoards").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n)),
+    () => drain(n => ctx.db.query("workspaceAgentRuns").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n), run => runSteps(ctx, purge, run)),
+    () => drain(n => ctx.db.query("agentThreads").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n), thread => threadSteps(ctx, purge, thread)),
+    () => drain(n => ctx.db.query("workspaceAgents").withIndex("by_projectId", q => q.eq("projectId", projectId)).take(n), agent => agentSteps(ctx, purge, agent), agent => releaseFile(agent.avatarStorageId)),
   ]);
 }
 
-function runSteps(ctx: MutationCtx, { drain }: Purger, run: Doc<"workspaceAgentRuns">) {
+export function runSteps(ctx: MutationCtx, { drain }: Purger, run: Doc<"workspaceAgentRuns">) {
   return all([
     () => drain(n => ctx.db.query("workspaceAgentEvents").withIndex("by_runId_and_sequence", q => q.eq("runId", run._id)).take(n)),
     () => drain(n => ctx.db.query("agentApprovals").withIndex("by_runId_and_requestId", q => q.eq("runId", run._id)).take(n)),
@@ -185,7 +246,7 @@ function runSteps(ctx: MutationCtx, { drain }: Purger, run: Doc<"workspaceAgentR
 
 /** Removes one bounded step of the workspace; true once the workspace itself is gone. */
 async function purgeWorkspace(ctx: MutationCtx, team: Doc<"teams">) {
-  const purge = purger(ctx, team._id);
+  const purge = purger(ctx, inWorkspace(ctx, team._id));
   const { drain, releaseFile } = purge;
   const teamId = team._id;
   const done = await all([
@@ -196,16 +257,8 @@ async function purgeWorkspace(ctx: MutationCtx, team: Doc<"teams">) {
     () => drain(n => ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", teamId)).take(n),
       project => projectSteps(ctx, purge, project), project => releaseFile(project.iconStorageId)),
     () => drain(n => ctx.db.query("workspaceAgentRuns").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), run => runSteps(ctx, purge, run)),
-    () => drain(n => ctx.db.query("agentThreads").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), thread => all([
-      () => drain(n => ctx.db.query("agentThreadMessages").withIndex("by_threadId_and_seq", q => q.eq("threadId", thread._id)).take(n)),
-      () => drain(n => ctx.db.query("agentThreadReads").withIndex("by_threadId_and_userId", q => q.eq("threadId", thread._id)).take(n)),
-    ])),
-    () => drain(n => ctx.db.query("workspaceAgents").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), agent => all([
-      () => drain(n => ctx.db.query("projectAgents").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
-      () => drain(n => ctx.db.query("agentRendererBots").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
-      () => drain(n => ctx.db.query("agentBudgets").withIndex("by_agentId", q => q.eq("agentId", agent._id)).take(n)),
-      () => drain(n => ctx.db.query("budgetSpend").withIndex("by_agentId_and_month", q => q.eq("agentId", agent._id)).take(n)),
-    ]), agent => releaseFile(agent.avatarStorageId)),
+    () => drain(n => ctx.db.query("agentThreads").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), thread => threadSteps(ctx, purge, thread)),
+    () => drain(n => ctx.db.query("workspaceAgents").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), agent => agentSteps(ctx, purge, agent), agent => releaseFile(agent.avatarStorageId)),
     () => drain(n => ctx.db.query("modelHostSources").withIndex("by_teamId_and_enabled", q => q.eq("teamId", teamId)).take(n),
       source => drain(n => ctx.db.query("modelHostExecutions").withIndex("by_sourceId_and_status_and_leaseUntil", q => q.eq("sourceId", source._id)).take(n))),
     () => drain(n => ctx.db.query("agentHosts").withIndex("by_teamId", q => q.eq("teamId", teamId)).take(n), host => all([

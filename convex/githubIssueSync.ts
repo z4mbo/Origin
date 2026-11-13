@@ -3,7 +3,7 @@ import { internalAction, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { touchProject } from "./lib/permissions";
+import { touchProject, liveProject } from "./lib/permissions";
 import { cleanLabels, projectLabels, registerLabels, workspaceLabelRows } from "./lib/labels";
 import { githubSyncEnabled, markPending, mirrorRow, mirrorsAsPullRequest, taskInDraft } from "./lib/githubIssueSync";
 import {
@@ -80,7 +80,7 @@ export const reconcile = internalMutation({
   returns: planValidator,
   handler: async (ctx, a): Promise<Plan> => {
     const task = await ctx.db.get(a.taskId);
-    const project = task ? await ctx.db.get(task.projectId) : null;
+    const project = task ? await liveProject(ctx, task.projectId) : null;
     if (!task || !project || !await githubSyncEnabled(ctx, project) || mirrorsAsPullRequest(task, project)) return { action: "none" };
     const draft = await taskInDraft(ctx, task);
     const number = task.githubIssueNumber;
@@ -232,7 +232,7 @@ export const backfillPage = internalMutation({
       if (task.githubIssueNumber || (task.done && !a.includeDone)) continue;
       let entry = projects.get(task.projectId);
       if (!entry) {
-        const project = await ctx.db.get(task.projectId);
+        const project = await liveProject(ctx, task.projectId);
         entry = { project, enabled: await githubSyncEnabled(ctx, project) };
         projects.set(task.projectId, entry);
       }

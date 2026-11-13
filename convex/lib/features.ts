@@ -1,7 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { canEdit, requireTeamMember } from "./permissions";
+import { canEdit, requireTeamMember, liveProject } from "./permissions";
 
 export async function requireWorkspaceEditor(ctx: QueryCtx | MutationCtx, teamId: Id<"teams">, sessionToken: string) {
   const result = await requireTeamMember(ctx, teamId, sessionToken);
@@ -23,7 +23,7 @@ export function validDay(value: string) {
 }
 
 export async function workspaceProject(ctx: QueryCtx | MutationCtx, teamId: Id<"teams">, projectId: Id<"projects">) {
-  const project = await ctx.db.get(projectId);
+  const project = await liveProject(ctx, projectId);
   if (!project || project.teamId !== teamId) throw new ConvexError("Project not found");
   return project;
 }

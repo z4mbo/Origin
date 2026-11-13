@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { projectMember, requireTeamMember } from "./lib/permissions";
+import { projectMember, requireTeamMember, liveProject } from "./lib/permissions";
 
 export const update = mutation({
   args: { sessionToken: v.string(), teamId: v.id("teams"), clientId: v.string(), sequence: v.number(), projectId: v.union(v.id("projects"), v.null()) },
@@ -17,7 +17,7 @@ export const update = mutation({
     const { user } = access;
     let projectId = args.projectId;
     if (projectId) {
-      const project = await ctx.db.get(projectId);
+      const project = await liveProject(ctx, projectId);
       if (!project || project.teamId !== args.teamId || !await projectMember(ctx, project, user)) projectId = null;
     }
     const existing = await ctx.db.query("projectPresence").withIndex("by_team_user_client", q => q.eq("teamId", args.teamId).eq("userId", user._id).eq("clientId", args.clientId)).unique();
@@ -42,7 +42,7 @@ export const list = query({
     for (const row of rows) {
       if (!row.projectId || row.userId === user._id || seen.has(row.userId)) continue;
       const member = await ctx.db.get(row.userId);
-      const project = await ctx.db.get(row.projectId);
+      const project = await liveProject(ctx, row.projectId);
       if (!member || member.status !== "active" || project?.teamId !== args.teamId || !await projectMember(ctx, project, user) || !await projectMember(ctx, project, member)) continue;
       seen.add(row.userId);
       result.push({ userId: member._id, projectId: row.projectId, name: member.name, username: member.username, email: member.email, avatarUrl: member.avatarStorageId ? await ctx.storage.getUrl(member.avatarStorageId) : null, updatedAt: row.updatedAt });

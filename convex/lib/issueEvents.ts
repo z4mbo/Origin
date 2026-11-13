@@ -5,12 +5,13 @@ import { globalIssueWebhook } from "../issueWebhooks";
 import { issueKey } from "../../lib/github-references";
 import { issueWebhookChanges, issueWebhookPayload, type IssueWebhookChanges, type IssueWebhookEvent } from "../../lib/issue-webhook";
 import { queueGitHubSync } from "./githubIssueSync";
+import { liveProject } from "./permissions";
 
 // Issue webhooks from issue writes: call issueCreated after inserting an issue, and issueStatusChanged with the
 // issue as it was before a write that may move or complete it. Each schedules convex/issueWebhooks.ts `deliver`
 // with the finished body; nothing is scheduled when neither the workspace nor the deployment has a webhook.
 
-async function webhookConfigured(ctx: MutationCtx, teamId: Id<"teams">) {
+export async function webhookConfigured(ctx: MutationCtx, teamId: Id<"teams">) {
   return Boolean(globalIssueWebhook()) || Boolean(await ctx.db.query("issueWebhooks").withIndex("by_teamId", q => q.eq("teamId", teamId)).unique());
 }
 
@@ -19,7 +20,7 @@ async function columnTitle(ctx: MutationCtx, columnId: Id<"columns">) {
 }
 
 async function schedule(ctx: MutationCtx, type: IssueWebhookEvent, task: Doc<"tasks">, changes: IssueWebhookChanges | null) {
-  const project = await ctx.db.get(task.projectId);
+  const project = await liveProject(ctx, task.projectId);
   const teamId = task.teamId ?? project?.teamId;
   const team = teamId ? await ctx.db.get(teamId) : null;
   if (!project || !team || team.deletingAt || !await webhookConfigured(ctx, team._id)) return;

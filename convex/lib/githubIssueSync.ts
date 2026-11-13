@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { isDraftColumn, projectDraftStatus } from "./columns";
 import { isLegacyIdeaColumn } from "../../lib/origin-columns";
+import { liveProject, isDeleting } from "./permissions";
 
 // The outbox side of two-way GitHub issue sync (convex/githubIssueSync.ts). Issue writes call queueGitHubSync (or
 // queueGitHubDelete before deleting); the Next worker (lib/github-sync.ts syncGitHubOutbox) drains the outbox.
@@ -63,7 +64,7 @@ export async function markPending(ctx: MutationCtx, projectId: Id<"projects">, t
 export async function queueGitHubSync(ctx: MutationCtx, taskId: Id<"tasks">) {
   const task = await ctx.db.get(taskId);
   if (!task) return;
-  const project = await ctx.db.get(task.projectId);
+  const project = await liveProject(ctx, task.projectId);
   if (!project || !await githubSyncEnabled(ctx, project) || mirrorsAsPullRequest(task, project)) return;
   // A Backlog issue without a GitHub issue has nothing to mirror yet; leaving Backlog queues it again.
   if (!task.githubIssueNumber && await taskInDraft(ctx, task)) return;
@@ -74,7 +75,7 @@ export async function queueGitHubSync(ctx: MutationCtx, taskId: Id<"tasks">) {
 
 /** After a workspace reconnects GitHub, pending mirrors should retry now instead of waiting out backoff. */
 export async function retryPendingMirrorsForTeam(ctx: MutationCtx, teamId: Id<"teams">) {
-  const projectIds = new Set((await ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", teamId)).take(500)).map(project => project._id));
+  const projectIds = new Set((await ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", teamId)).take(500)).filter(project => !isDeleting(project)).map(project => project._id));
   if (!projectIds.size) return 0;
   const rows = await ctx.db.query("githubIssueMirrors").withIndex("by_pending_and_nextAt", q => q.eq("pending", true)).take(500);
   let retried = 0;

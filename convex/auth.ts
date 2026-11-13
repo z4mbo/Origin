@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { createWorkspace } from "./workspaces";
 import { admitStorageReference, issueUpload, storageMetadata } from "./lib/storage";
+import { liveProject, isDeleting } from "./lib/permissions";
 import {
   createSession,
   createUser,
@@ -206,7 +207,7 @@ export const acceptInviteAccount = internalMutation({
           .unique();
     const invite = projectInvite ?? teamInvite;
     if (!invite || invite.status !== "invited") throw new ConvexError("Invitation not found");
-    const project = projectInvite ? await ctx.db.get(projectInvite.projectId) : null;
+    const project = projectInvite ? await liveProject(ctx, projectInvite.projectId) : null;
     if (projectInvite && !project) throw new ConvexError("Project no longer exists");
     const teamId = project?.teamId ?? teamInvite?.teamId;
     const team = teamId ? await ctx.db.get(teamId) : null;
@@ -259,9 +260,9 @@ export const acceptInviteAccount = internalMutation({
     const projects = await ctx.db
       .query("projects")
       .withIndex("by_team", (q) => q.eq("teamId", teamInvite.teamId))
-      .take(1);
+      .take(20);
     const sessionToken = await createSession(ctx, user._id);
-    return { sessionToken, user: publicUser(user), projectId: projects[0]?._id ?? null, teamId: teamInvite.teamId };
+    return { sessionToken, user: publicUser(user), projectId: projects.find(project => !isDeleting(project))?._id ?? null, teamId: teamInvite.teamId };
   },
 });
 
