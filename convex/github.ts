@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { action, internalMutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { canEdit, changeOpenIssueCount, requireMember, touchProject } from "./lib/permissions";
+import { canEdit, changeOpenIssueCount, requireMember, touchProject, liveProject } from "./lib/permissions";
 import { DEFAULT_OWNER_EMAIL } from "./lib/auth";
 import { recordCompletion } from "./lib/completions";
 import { isDraftColumn } from "./lib/columns";
@@ -323,7 +323,7 @@ export const upsertRepoSnapshot = internalMutation({
           await issueStatusChanged(ctx, existing);
         } else {
           const taskId = await ctx.db.insert("tasks", {
-            teamId: (await ctx.db.get(args.projectId))?.teamId,
+            teamId: (await liveProject(ctx, args.projectId))?.teamId,
             projectId: args.projectId,
             columnId: patch.columnId,
             title: issue.title,

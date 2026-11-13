@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireUser } from "./lib/auth";
-import { canEdit, changeOpenIssueCount, getActiveTeamMember, projectMember, projectPeople, requireMember, requireTeamMember, touchProject } from "./lib/permissions";
+import { canEdit, changeOpenIssueCount, getActiveTeamMember, projectMember, projectPeople, requireMember, requireTeamMember, touchProject, liveProject, isDeleting } from "./lib/permissions";
 import { priorityValidator, taskAssetTypeValidator } from "./lib/validators";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -46,7 +46,7 @@ async function requireEditor(ctx: QueryCtx | MutationCtx, projectId: Id<"project
 
 async function findAssignee(ctx: QueryCtx | MutationCtx, projectId: Id<"projects">, email?: string) {
   if (!email) return null;
-  const project = await ctx.db.get(projectId);
+  const project = await liveProject(ctx, projectId);
   const user = await ctx.db.query("users").withIndex("by_email", q => q.eq("email", email)).unique();
   if (!project || user?.status !== "active" || !await projectMember(ctx, project, user)) return null;
   if (project?.teamId) {
@@ -120,7 +120,7 @@ export const inbox = query({
       memberships
         .filter((membership) => membership.status === "active")
         .map(async (membership) => {
-          const project = await ctx.db.get(membership.projectId);
+          const project = await liveProject(ctx, membership.projectId);
           if (!project || project.status !== "active" || !await projectMember(ctx, project, user)) return [];
           if (project.teamId) {
             const workspaceMember = await ctx.db.query("teamMembers").withIndex("by_team_email", q => q.eq("teamId", project.teamId!).eq("email", user.email)).unique();
@@ -310,7 +310,7 @@ export async function createTaskRecord(ctx: MutationCtx, args: { projectId: Id<"
     if (args.columnId) await ensureDraftColumn(ctx, args.projectId);
     const last = await ctx.db.query("tasks").withIndex("by_column_order", q => q.eq("columnId", column._id)).order("desc").first();
     const order = last ? last.order + 1 : 0;
-    const project = await ctx.db.get(args.projectId);
+    const project = await liveProject(ctx, args.projectId);
     const done = isDoneColumn(column);
     const description = args.description?.trim() || undefined;
     const acceptanceCriteria = args.acceptanceCriteria?.length ? args.acceptanceCriteria : undefined;
@@ -378,7 +378,7 @@ export const selectLegacyDraftCandidates = internalMutation({
     let changed = 0;
     for (const column of page.page) {
       if (!isLegacyIdeaColumn(column)) continue;
-      const project = await ctx.db.get(column.projectId);
+      const project = await liveProject(ctx, column.projectId);
       if (!project) continue;
       const draft = await ctx.db.query("columns").withIndex("by_projectId_and_isDraft_and_order", q => q.eq("projectId", column.projectId).eq("isDraft", true)).first();
       if (draft) continue;
@@ -400,6 +400,7 @@ export const repairProjectDrafts = internalMutation({
     let created = 0;
     let adopted = 0;
     for (const project of page.page) {
+      if (isDeleting(project)) continue;
       const result = await ensureDraftColumn(ctx, project._id, { completeLegacyScan: true });
       if (result.created) created++;
       if (result.adopted) adopted++;
@@ -478,7 +479,7 @@ export async function updateTaskRecord(ctx: MutationCtx, args: { projectId: Id<"
     if (patch.done !== undefined) await recordCompletion(ctx, task, patch.done);
     await ctx.db.patch(args.taskId, patch);
     if (patch.assignedToEmail && patch.assignedToEmail !== task.assignedToEmail) {
-      const project = await ctx.db.get(args.projectId);
+      const project = await liveProject(ctx, args.projectId);
       if (project?.teamId) await notify(ctx, { teamId: project.teamId, email: patch.assignedToEmail, actorId, kind: "assignment", eventId: `assigned:${task._id}:${crypto.randomUUID()}`, projectId: project._id, taskId: task._id });
     }
     if (patch.done !== undefined && patch.done !== task.done) await changeOpenIssueCount(ctx, args.projectId, patch.done ? -1 : 1);
@@ -581,7 +582,7 @@ export async function addCommentRecord(ctx: MutationCtx, args: { projectId: Id<"
     const references = [];
     for (const reference of new Map((args.references || []).map(item => [item.id, item])).values()) {
       if (!containsMention(args.body, `#${reference.label}`)) continue;
-      const target = await ctx.db.get(reference.projectId);
+      const target = await liveProject(ctx, reference.projectId);
       if (!target || target.teamId !== project.teamId || !await projectMember(ctx, target, user)) throw new ConvexError("Reference a project you can access in this workspace");
       const issueId = reference.type === "issue" ? ctx.db.normalizeId("tasks", reference.id) : null;
       const issue = issueId ? await ctx.db.get(issueId) : null;
@@ -690,7 +691,7 @@ export const authorizeLocalFile = query({
     const assets = await ctx.db.query("taskAssets").withIndex("by_localFileId", q => q.eq("localFileId", args.fileId)).take(100);
     if (!assets.length) return null;
     for (const asset of assets) {
-      const project = await ctx.db.get(asset.projectId);
+      const project = await liveProject(ctx, asset.projectId);
       if (project?.teamId !== args.teamId || !await projectMember(ctx, project, user)) throw new ConvexError("You don't have access to this project");
     }
     return null;

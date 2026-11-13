@@ -1,7 +1,7 @@
 "use client";
 import { errorText } from "@/lib/error-text";
 import { useMutation, useQuery } from "convex/react";
-import { Code2, ImageUp, KeyRound, Layers, Loader2, MessagesSquare, Power, Settings, Shapes, type LucideIcon } from "lucide-react";
+import { Code2, ImageUp, KeyRound, Layers, Loader2, MessagesSquare, Power, Settings, Shapes, Trash2, type LucideIcon } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -14,6 +14,7 @@ export type { TabKey } from "@/lib/project-tabs";
 import { ProjectIcon, ProjectIconPicker } from "./project-icon";
 import { DelayedSkeleton } from "./delayed-skeleton";
 import { ConfirmButton } from "./confirm-button";
+import { Dialog } from "./dialog";
 import { useWorkspace } from "./workspace-context";
 import type { AuthUser } from "./origin-app";
 
@@ -319,5 +320,39 @@ function SettingsTab({ project, sessionToken }: { project: ProjectWithUi; sessio
       </div>
       {statusError && <p className="notice danger" role="alert">{statusError}</p>}
     </section>
+    <DeleteProject project={project} sessionToken={sessionToken} />
   </div>;
+}
+
+/** Permanent deletion, kept apart from the reversible Deactivate; the server checks the typed name again. */
+function DeleteProject({ project, sessionToken }: { project: ProjectWithUi; sessionToken: string }) {
+  const workspace = useWorkspace();
+  const deleteProject = useMutation(api.projects.deleteProject);
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const matches = typed.trim() === project.name.trim();
+  const cancel = () => { if (!busy) { setConfirming(false); setTyped(""); setError(""); } };
+  return <section className="project-settings-section project-settings-danger" aria-labelledby="project-settings-delete">
+    <h2 id="project-settings-delete">Danger zone</h2>
+    <div className="project-danger-row">
+      <strong>Delete project</strong>
+      <button type="button" className="ghost-button compact danger" onClick={() => setConfirming(true)}><Trash2 size={14} />Delete project</button>
+    </div>
+    {confirming && <Dialog title={`Delete ${project.name}`} className="confirm-dialog" onClose={cancel}>
+      <form className="dialog-body stack-form" onSubmit={async event => {
+        event.preventDefault(); if (!matches || busy) return;
+        setBusy(true); setError("");
+        try { await deleteProject({ sessionToken, projectId: project._id, confirmName: typed }); window.location.replace(`/${workspace.slug}`); }
+        catch (e) { setError(errorText(e, "Could not delete project")); setBusy(false); }
+      }}>
+        <p className="confirm-text">This permanently deletes the project&apos;s issues, comments, attachments and assets, wiki pages, vault entries, chat and drawings for everyone. It cannot be undone; to pause a project instead, deactivate it.</p>
+        <p className="confirm-text">{project.repoUrl ? "The GitHub repository and its issues and pull requests are kept; Origin stops syncing them." : "Nothing outside Origin is changed."}</p>
+        <label>Type {project.name} to confirm<input value={typed} onChange={event => setTyped(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy} autoFocus /></label>
+        {error && <p className="notice danger" role="alert">{error}</p>}
+        <div className="dialog-actions"><button type="button" className="ghost-button compact" disabled={busy} onClick={cancel}>Cancel</button><button className="primary-button compact danger" disabled={!matches || busy}>{busy && <Loader2 size={14} className="spin" />}Delete project</button></div>
+      </form>
+    </Dialog>}
+  </section>;
 }

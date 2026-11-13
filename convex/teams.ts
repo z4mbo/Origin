@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
 import { requireUser } from "./lib/auth";
-import { normalizeEmail, projectMember, requireTeamAdmin, requireTeamMember } from "./lib/permissions";
+import { normalizeEmail, projectMember, requireTeamAdmin, requireTeamMember, liveProject, isDeleting } from "./lib/permissions";
 import schema from "./schema";
 import { roleValidator } from "./lib/validators";
 import { reviewGitHubAccess } from "./lib/githubAccess";
@@ -14,7 +14,7 @@ async function removeMembership(ctx: MutationCtx, member: Doc<"teamMembers">) {
   const memberships = await ctx.db.query("members").withIndex("by_email", q => q.eq("email", member.email)).take(501);
   if (memberships.length > 500) throw new ConvexError("Remove this account's project memberships before leaving");
   for (const item of memberships) {
-    const project = await ctx.db.get(item.projectId);
+    const project = await liveProject(ctx, item.projectId);
     if (project?.teamId === member.teamId) await ctx.db.delete(item._id);
   }
   if (member.userId) {
@@ -101,7 +101,8 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const { member, user } = await requireTeamAdmin(ctx, args.teamId, args.sessionToken);
     if (member.role !== "owner") throw new ConvexError("Only the workspace owner can do this");
-    const projects = await ctx.db.query("projects").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).collect();
+    // Projects already being deleted do not block it; the workspace purge removes whatever is left of them.
+    const projects = (await ctx.db.query("projects").withIndex("by_team", (q) => q.eq("teamId", args.teamId)).collect()).filter(project => !isDeleting(project));
     if (projects.length) throw new ConvexError("Delete the workspace's projects first");
     const team = await ctx.db.get(args.teamId);
     if (team) await startWorkspaceDeletion(ctx, team, { userId: user._id, name: user.name });

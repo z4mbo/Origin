@@ -5,7 +5,8 @@ import { requireTeamAdmin, requireTeamMember } from "./lib/permissions";
 import { seal, sealingConfigured, SEALING_MISSING, unseal } from "./lib/sealing";
 import { ISSUE_WEBHOOK_MIN_SECRET, isOpenBotWebhookUrl, issueWebhookUrlError, openBotWebhookRequest, postIssueWebhook, signIssueWebhook } from "../lib/issue-webhook";
 
-// Outgoing issue webhooks. Issue writes (convex/lib/issueEvents.ts) build the payload in the mutation and schedule
+// Outgoing issue and project webhooks. Issue writes (convex/lib/issueEvents.ts) and project creation and deletion
+// (convex/lib/projectEvents.ts) build the payload in the mutation and schedule
 // `deliver`, which signs and POSTs it, so a slow or failing endpoint never fails the issue change. A workspace's own
 // URL, signing secret and optional Bearer token (Settings > Workspace) win over the deployment's ORIGIN_ISSUE_WEBHOOK_URL / _SECRET.
 
@@ -13,6 +14,8 @@ const purpose = (teamId: string) => `issue-webhook:${teamId}`;
 const ADMIN_ROLES = new Set(["owner", "admin"]);
 /** Delays before the second and third attempt. */
 const RETRY_MS = [30_000, 300_000];
+/** Every event type `deliver` sends; lib/issue-webhook.ts ORIGIN_WEBHOOK_EVENTS lists the same. */
+export const webhookEvent = v.union(v.literal("issue.created"), v.literal("issue.updated"), v.literal("issue.delegated"), v.literal("project.created"), v.literal("project.deleted"));
 
 /** The deployment-wide webhook, when both variables are usable. */
 export function globalIssueWebhook() {
@@ -87,7 +90,7 @@ export const target = internalQuery({
  * twice (after 30 s and 5 min). Logs name the event and status only, never the secret.
  */
 export const deliver = internalAction({
-  args: { teamId: v.id("teams"), event: v.union(v.literal("issue.created"), v.literal("issue.updated"), v.literal("issue.delegated")), deliveryId: v.string(), body: v.string(), attempt: v.optional(v.number()) },
+  args: { teamId: v.id("teams"), event: webhookEvent, deliveryId: v.string(), body: v.string(), attempt: v.optional(v.number()) },
   returns: v.null(),
   handler: async (ctx, a) => {
     const row = await ctx.runQuery(internal.issueWebhooks.target, { teamId: a.teamId });

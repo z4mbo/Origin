@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireUser } from "./lib/auth";
-import { canEdit, getActiveTeamMember, normalizeEmail, projectMember, projectPeople, requireAdmin, requireMember, requireTeamMember, touchProject } from "./lib/permissions";
+import { canEdit, getActiveTeamMember, normalizeEmail, projectMember, projectPeople, requireAdmin, requireMember, requireTeamMember, touchProject, liveProject } from "./lib/permissions";
 import { repositoryUrl } from "./lib/repository";
 import { compareProjectOrder, reorderWorkspaceProjects } from "./lib/projectOrder";
 import { repoVisibility } from "./integrationTables";
@@ -12,6 +12,8 @@ import { internal } from "./_generated/api";
 import { admitStorageReference, issueUpload, storageMetadata, validateUpload } from "./lib/storage";
 import { DEFAULT_WORKFLOW_COLUMNS, ensureDraftColumn } from "./lib/columns";
 import { DRAFT_COLUMN_TITLE } from "../lib/origin-columns";
+import { projectCreated } from "./lib/projectEvents";
+import { startProjectDeletion } from "./projectDeletion";
 const accents = ["#111111", "#7c3aed", "#2563eb", "#059669", "#d97706", "#dc2626"];
 const callStaleMs = 30_000;
 
@@ -40,7 +42,7 @@ export const listForUser = query({
       memberships
         .filter((membership) => membership.status === "active")
         .map(async (membership) => {
-          const project = await ctx.db.get(membership.projectId);
+          const project = await liveProject(ctx, membership.projectId);
           if (!project) return null;
           const member = await projectMember(ctx, project, user);
           if (!member) return null;
@@ -63,7 +65,7 @@ export const get = query({
   args: { projectId: v.id("projects"), sessionToken: v.string() },
   handler: async (ctx, args) => {
     const { member } = await requireMember(ctx, args.projectId, args.sessionToken);
-    const project = await ctx.db.get(args.projectId);
+    const project = await liveProject(ctx, args.projectId);
     if (!project) throw new ConvexError("Project not found");
     return {
       ...project,
@@ -370,7 +372,14 @@ export async function createProjectRecord(ctx: MutationCtx, args: { teamId: Id<"
       if (shared) await ctx.scheduler.runAfter(0, internal.teamGitHub.autoCreate, { projectId });
       else await ctx.scheduler.runAfter(0, internal.integrations.kick, { projectId });
     }
+    await announceProject(ctx, projectId, user);
     return projectId;
+}
+
+/** Sends project.created for a project just inserted; every creation path calls it. */
+async function announceProject(ctx: MutationCtx, projectId: Id<"projects">, user: Doc<"users">) {
+  const project = await ctx.db.get(projectId);
+  if (project) await projectCreated(ctx, project, user);
 }
 
 export const reorder = mutation({
@@ -454,6 +463,7 @@ export const importRepos = mutation({
           updatedAt: now,
         });
       }
+      await announceProject(ctx, projectId, user);
       imported.push({ projectId, name, repoUrl, created: true });
       existingRepoUrls.add(normalizedRepoUrl);
       existingNames.add(normalizedName);
@@ -523,12 +533,39 @@ export const update = mutation({
   },
 });
 
+/** Deactivates the project; reversible from Settings. Permanent deletion is deleteProject. */
 export const remove = mutation({
   args: { projectId: v.id("projects"), sessionToken: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAdmin(ctx, args.projectId, args.sessionToken);
     await ctx.db.patch(args.projectId, { status: "inactive", updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/** Whether the caller could have deleted this project, checked without projectMember (which hides it once deleting). */
+async function canRetryDeletion(ctx: MutationCtx, project: Doc<"projects">, sessionToken: string) {
+  const user = await requireUser(ctx, sessionToken);
+  if (!project.teamId) return project.deletedBy?.userId === user._id;
+  const member = await getActiveTeamMember(ctx, project.teamId, user.email);
+  return Boolean(member && (!member.userId || member.userId === user._id) && (["owner", "admin"].includes(member.role) || project.deletedBy?.userId === user._id));
+}
+
+/**
+ * Permanently deletes a project: hidden at once, then its issues, comments, files, wiki, chat, drawings and every other
+ * row are purged in the background (convex/projectDeletion.ts). The GitHub repository is kept. Needs a workspace or
+ * project owner/admin and the exact project name. Calling it again for a project already being deleted does nothing.
+ */
+export const deleteProject = mutation({
+  args: { projectId: v.id("projects"), sessionToken: v.string(), confirmName: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.projectId);
+    if (existing && existing.deletingAt !== undefined && await canRetryDeletion(ctx, existing, args.sessionToken)) return null;
+    const { user, project } = await requireAdmin(ctx, args.projectId, args.sessionToken);
+    if (args.confirmName.trim() !== project.name.trim()) throw new ConvexError("Type the project name exactly to delete it");
+    await startProjectDeletion(ctx, project, user);
     return null;
   },
 });

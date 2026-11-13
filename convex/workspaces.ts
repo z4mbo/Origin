@@ -5,7 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { api } from "./_generated/api";
 import { deliverInvitation, invitationAddress } from "./lib/invitationMail";
 import { DEFAULT_OWNER_EMAIL, requireUser } from "./lib/auth";
-import { changeOpenIssueCount, requireTeamAdmin, requireTeamMember } from "./lib/permissions";
+import { changeOpenIssueCount, requireTeamAdmin, requireTeamMember, liveProject, isDeleting } from "./lib/permissions";
 import { startWorkspaceDeletion } from "./workspaceDeletion";
 
 const inviteRole = v.union(v.literal("admin"), v.literal("member"), v.literal("viewer"));
@@ -117,12 +117,13 @@ export const deletionSummary = query({
     await requireTeamAdmin(ctx, args.teamId, args.sessionToken);
     const team = await ctx.db.get(args.teamId);
     if (!team) throw new ConvexError("Workspace not found");
-    const [projects, agents, members] = await Promise.all([
+    const [listed, agents, members] = await Promise.all([
       ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", args.teamId)).take(COUNTED_UP_TO + 1),
       ctx.db.query("workspaceAgents").withIndex("by_teamId", q => q.eq("teamId", args.teamId)).take(COUNTED_UP_TO + 1),
       ctx.db.query("teamMembers").withIndex("by_team", q => q.eq("teamId", args.teamId)).take(COUNTED_UP_TO + 1),
     ]);
     const counted = (rows: unknown[]) => Math.min(rows.length, COUNTED_UP_TO);
+    const projects = listed.filter(project => !isDeleting(project));
     return {
       name: team.name,
       projects: projects.slice(0, 20).map(project => project.name),
@@ -130,7 +131,7 @@ export const deletionSummary = query({
       agentCount: counted(agents),
       memberCount: counted(members.filter(member => member.status === "active")),
       openIssueCount: projects.slice(0, COUNTED_UP_TO).reduce((sum, project) => sum + (project.openIssueCount ?? 0), 0),
-      countsCapped: [projects, agents, members].some(rows => rows.length > COUNTED_UP_TO),
+      countsCapped: [listed, agents, members].some(rows => rows.length > COUNTED_UP_TO),
     };
   },
 });
@@ -173,7 +174,7 @@ export const createInvite = mutation({
     const team = await ctx.db.get(args.teamId);
     if (!team) throw new ConvexError("Workspace not found");
     if (args.projectId) {
-      if ((await ctx.db.get(args.projectId))?.teamId !== team._id) throw new ConvexError("Project not found");
+      if ((await liveProject(ctx, args.projectId))?.teamId !== team._id) throw new ConvexError("Project not found");
       if (args.role === "admin") throw new ConvexError("Project links cannot grant workspace admin access");
     }
     const email = args.email?.trim().toLowerCase() || undefined;
@@ -195,7 +196,7 @@ export const invitePreview = query({
     if (!invite || invite.revoked || invite.expiresAt < Date.now()) return null;
     const team = await ctx.db.get(invite.teamId);
     if (team?.deletingAt !== undefined) return null;
-    const project = invite.projectId ? await ctx.db.get(invite.projectId) : null;
+    const project = invite.projectId ? await liveProject(ctx, invite.projectId) : null;
     if (invite.projectId && project?.teamId !== team?._id) return null;
     return team ? { name: project ? `${team.name} / ${project.name}` : team.name, role: invite.role, email: invite.email } : null;
   },
@@ -211,7 +212,7 @@ export const acceptInvite = mutation({
     if (invite.email && invite.email !== user.email) throw new ConvexError(`Sign in with ${invite.email} to accept this invitation`);
     const team = await ctx.db.get(invite.teamId);
     if (!team || team.deletingAt !== undefined) throw new ConvexError("Workspace no longer exists");
-    const project = invite.projectId ? await ctx.db.get(invite.projectId) : null;
+    const project = invite.projectId ? await liveProject(ctx, invite.projectId) : null;
     if (invite.projectId && (!project || project.teamId !== team._id)) throw new ConvexError("Project no longer exists");
     const member = await ctx.db.query("teamMembers").withIndex("by_team_email", q => q.eq("teamId", team._id).eq("email", user.email)).unique();
     const now = Date.now();

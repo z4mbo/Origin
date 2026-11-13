@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { projectMember, requireTeamMember } from "./lib/permissions";
+import { projectMember, requireTeamMember, liveProject } from "./lib/permissions";
 
 async function memberInWorkspace(ctx: QueryCtx, args: { sessionToken: string; teamId: Id<"teams">; email: string }) {
   await requireTeamMember(ctx, args.teamId, args.sessionToken);
@@ -31,7 +31,7 @@ export const issues = query({
     const result = await ctx.db.query("tasks").withIndex("by_assignedToEmail_and_done", q => q.eq("assignedToEmail", args.email).eq("done", args.done)).order("desc").paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, 50) });
     // Page by assignee, then authorize each project before returning any issue data.
     const rows = await Promise.all(result.page.map(async task => {
-      const project = await ctx.db.get(task.projectId);
+      const project = await liveProject(ctx, task.projectId);
       if (!project || project.teamId !== args.teamId || (!args.done && project.status !== "active") || !await projectMember(ctx, project, user)) return null;
       return { _id: task._id, projectId: task.projectId, title: task.title, projectName: project.name, accent: project.accent, priority: task.priority, dueDate: task.dueDate, done: task.done };
     }));

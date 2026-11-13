@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canEdit, projectMember, requireMember, requireTeamMember } from "./lib/permissions";
+import { canEdit, projectMember, requireMember, requireTeamMember, liveProject, isDeleting } from "./lib/permissions";
 import { issueDelegated } from "./lib/issueEvents";
 import { issueActivityKind } from "./issueActivityTables";
 
@@ -22,7 +22,7 @@ const live = (grant: Doc<"connectorGrants">, now = Date.now()) => !grant.revoked
 
 /** Appends one entry to an issue's Activity. */
 export async function recordActivity(ctx: MutationCtx, task: Doc<"tasks">, actor: Actor, kind: ActivityKind, detail: { from?: string; to?: string; body?: string } = {}) {
-  const project = await ctx.db.get(task.projectId);
+  const project = await liveProject(ctx, task.projectId);
   const teamId = task.teamId ?? project?.teamId;
   if (!teamId) return;
   const body = detail.body?.trim().slice(0, MAX_BODY);
@@ -59,7 +59,7 @@ export async function projectAgents(ctx: Ctx, project: Doc<"projects">) {
  */
 export async function setDelegate(ctx: MutationCtx, task: Doc<"tasks">, grantId: Id<"connectorGrants"> | null, actor: Actor) {
   if ((task.delegateGrantId ?? null) === grantId) return;
-  const project = await ctx.db.get(task.projectId);
+  const project = await liveProject(ctx, task.projectId);
   if (!project) throw new ConvexError("Project not found");
   let agent: Doc<"connectorGrants"> | null = null;
   if (grantId) {
@@ -76,6 +76,7 @@ export async function releaseAgentIssues(ctx: MutationCtx, grant: Doc<"connector
   const projects = await ctx.db.query("projects").withIndex("by_team", q => q.eq("teamId", grant.teamId)).take(500);
   let released = 0;
   for (const project of projects) {
+    if (isDeleting(project)) continue;
     for (const task of await ctx.db.query("tasks").withIndex("by_project_and_done", q => q.eq("projectId", project._id).eq("done", false)).take(2000)) {
       if (task.delegateGrantId !== grant._id) continue;
       await ctx.db.patch(task._id, { delegateGrantId: undefined, delegateName: undefined });

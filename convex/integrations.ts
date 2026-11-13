@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { canEdit, getActiveTeamMember, requireMember, requireTeamAdmin, requireTeamMember, changeOpenIssueCount, touchProject } from "./lib/permissions";
+import { canEdit, getActiveTeamMember, requireMember, requireTeamAdmin, requireTeamMember, changeOpenIssueCount, touchProject, liveProject, isDeleting } from "./lib/permissions";
 import { hasCurrentMergeReceipt, recordCompletion } from "./lib/completions";
 import { DEFAULT_OWNER_EMAIL } from "./lib/auth";
 import { isDraftColumn, projectDraftStatus } from "./lib/columns";
@@ -73,7 +73,7 @@ export const configure = mutation({
 export const approveRepository = mutation({
   args: { sessionToken: v.string(), projectId: v.id("projects"), repoUrl: v.optional(v.string()) }, returns: v.null(),
   handler: async (ctx, a) => {
-    const project = await ctx.db.get(a.projectId);
+    const project = await liveProject(ctx, a.projectId);
     if (!project?.teamId || !project.repoUrl) throw new ConvexError("Repository required");
     await requireTeamAdmin(ctx, project.teamId, a.sessionToken);
     if (a.repoUrl !== undefined && project.repoUrl !== a.repoUrl) throw new ConvexError("Repository changed. Reload the project and try again.");
@@ -84,7 +84,7 @@ export const approveRepository = mutation({
 export const context = internalQuery({
   args: { projectId: v.id("projects"), taskId: v.optional(v.id("tasks")), credentialOwner: v.optional(v.id("users")) }, returns: v.string(),
   handler: async (ctx, a) => {
-    const p = await ctx.db.get(a.projectId); if (!p) throw new ConvexError("Project not found");
+    const p = await liveProject(ctx, a.projectId); if (!p) throw new ConvexError("Project not found");
     const task = a.taskId ? await ctx.db.get(a.taskId) : null;
     if (task && task.projectId !== p._id) throw new ConvexError("Issue not found");
     const credentialOwner = a.credentialOwner ? await ctx.db.get(a.credentialOwner) : null;
@@ -101,7 +101,7 @@ export const context = internalQuery({
 export const repoResult = internalMutation({
   args: { projectId: v.id("projects"), state: v.union(v.literal("ready"), v.literal("error"), v.literal("awaiting_connection")), repoUrl: v.optional(v.string()), repoId: v.optional(v.number()), error: v.optional(v.string()) }, returns: v.null(),
   handler: async (ctx, a) => {
-    const p = await ctx.db.get(a.projectId); if (!p) return null;
+    const p = await liveProject(ctx, a.projectId); if (!p) return null;
     if (p.repoUrl && p.repoUrl !== a.repoUrl) return null;
     if (a.repoUrl && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(a.repoUrl)) throw new ConvexError("Invalid repository");
     await ctx.db.patch(p._id, { githubRepoState: a.state, githubRepoError: a.error?.slice(0, 300),
@@ -113,7 +113,7 @@ export const repoResult = internalMutation({
 export const linkIssue = internalMutation({
   args: { projectId: v.id("projects"), taskId: v.id("tasks"), repoUrl: v.string(), number: v.number(), issueUrl: v.string(), state: v.union(v.literal("open"), v.literal("closed")), updatedAt: v.number() }, returns: v.null(),
   handler: async (ctx, a) => {
-    const project = await ctx.db.get(a.projectId); const task = await ctx.db.get(a.taskId);
+    const project = await liveProject(ctx, a.projectId); const task = await ctx.db.get(a.taskId);
     if (!project || !task || task.projectId !== project._id) throw new ConvexError("Issue not found");
     const normalized = (value?: string) => value?.replace(/\.git\/?$/, "").replace(/\/$/, "").replace(/^https?:\/\/github.com\//, "").toLowerCase();
     if (normalized(project.repoUrl) !== normalized(a.repoUrl)) throw new ConvexError("Repository changed; sync cancelled");
@@ -170,7 +170,7 @@ export const completeMergedIssue = internalMutation({
       || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(pullRequest.headSha)
       || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(pullRequest.mergeSha)
       || !Number.isFinite(pullRequest.mergedAt) || pullRequest.mergedAt <= 0 || pullRequest.mergedAt > Date.now() + 60000) throw new ConvexError("Invalid pull request merge receipt");
-    const project = await ctx.db.get(args.projectId);
+    const project = await liveProject(ctx, args.projectId);
     const repoUrl = repositoryUrl(args.repoUrl);
     if (!project || project.status !== "active" || !project.githubWorkspaceAccess || !repoUrl
       || repositoryUrl(project.repoUrl)?.toLowerCase() !== repoUrl.toLowerCase()) throw new ConvexError("Repository changed or is not authorized");
@@ -191,7 +191,7 @@ export const targets = internalQuery({
   handler: async (ctx, a) => {
     const batch = await ctx.db.query("tasks").withIndex("by_githubIssueNumber", q => q.gt("githubIssueNumber", 0)).paginate({ cursor: a.cursor, numItems: 10 });
     const rows = [];
-    for (const task of batch.page) { const p = await ctx.db.get(task.projectId); if (!p?.repoUrl) continue; rows.push({ taskId: task._id, projectId: p._id, repoUrl: p.repoUrl, number: task.githubIssueNumber, connection: await connection(ctx, p) }); }
+    for (const task of batch.page) { const p = await liveProject(ctx, task.projectId); if (!p?.repoUrl) continue; rows.push({ taskId: task._id, projectId: p._id, repoUrl: p.repoUrl, number: task.githubIssueNumber, connection: await connection(ctx, p) }); }
     return JSON.stringify({ rows, nextCursor: batch.isDone ? null : batch.continueCursor });
   },
 });
@@ -203,7 +203,7 @@ export const webhookTargets = internalQuery({
     const rows = [];
     const repo = a.repoUrl.toLowerCase().replace(/^https:\/\/github.com\//, "");
     for (const t of tasks) {
-      const p = await ctx.db.get(t.projectId);
+      const p = await liveProject(ctx, t.projectId);
       if (p?.repoUrl?.toLowerCase().replace(/^https?:\/\/github.com\//, "").replace(/\.git$/, "").replace(/\/$/, "") === repo) rows.push({ taskId: t._id, projectId: p._id, repoUrl: p.repoUrl, number: t.githubIssueNumber });
     }
     return JSON.stringify(rows);
@@ -217,7 +217,7 @@ export const unlinkedTasks = internalQuery({
     const page = await ctx.db.query("projects").paginate({ cursor: a.cursor, numItems: 25 });
     const rows: { projectId: string; taskId: string }[] = [];
     for (const project of page.page) {
-      if (project.status !== "active" || !project.repoUrl || !project.githubWorkspaceAccess) continue;
+      if (project.status !== "active" || isDeleting(project) || !project.repoUrl || !project.githubWorkspaceAccess) continue;
       const open = await ctx.db.query("tasks").withIndex("by_project_and_done", q => q.eq("projectId", project._id).eq("done", false)).take(200);
       const columns = new Map((await ctx.db.query("columns").withIndex("by_project_order", q => q.eq("projectId", project._id)).take(100)).map(column => [column._id, column]));
       let draftStatus: Promise<"present" | "absent" | "unresolved"> | undefined;
@@ -238,7 +238,7 @@ export const unlinkedTasks = internalQuery({
 
 export const pending = internalQuery({
   args: {}, returns: v.array(v.id("projects")),
-  handler: async ctx => (await ctx.db.query("projects").withIndex("by_githubRepoState", q => q.eq("githubRepoState", "pending")).take(100)).filter(p => p.status === "active").slice(0, 20).map(p => p._id),
+  handler: async ctx => (await ctx.db.query("projects").withIndex("by_githubRepoState", q => q.eq("githubRepoState", "pending")).take(100)).filter(p => p.status === "active" && !isDeleting(p)).slice(0, 20).map(p => p._id),
 });
 
 export const backfillIssueLinks = internalMutation({
@@ -248,7 +248,7 @@ export const backfillIssueLinks = internalMutation({
     for (const asset of page.page) {
       const match = asset.url.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)\/?$/i);
       if (!match) continue;
-      const task = await ctx.db.get(asset.taskId), project = await ctx.db.get(asset.projectId);
+      const task = await ctx.db.get(asset.taskId), project = await liveProject(ctx, asset.projectId);
       const repo = project?.repoUrl?.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git\/?$/, "").replace(/\/$/, "").toLowerCase();
       if (!task || task.projectId !== asset.projectId || task.githubIssueNumber || repo !== `${match[1]}/${match[2]}`.toLowerCase()) continue;
       await ctx.db.patch(task._id, { githubIssueNumber: Number(match[3]), githubIssueUrl: `https://github.com/${match[1]}/${match[2]}/issues/${match[3]}` });
@@ -261,7 +261,7 @@ export const backfillIssueLinks = internalMutation({
 export const retryRepo = mutation({
   args: { projectId: v.id("projects"), sessionToken: v.string() }, returns: v.null(),
   handler: async (ctx, a) => {
-    const p = await ctx.db.get(a.projectId); if (!p?.teamId || p.repoUrl) throw new ConvexError("No repository to create");
+    const p = await liveProject(ctx, a.projectId); if (!p?.teamId || p.repoUrl) throw new ConvexError("No repository to create");
     const { member } = await requireMember(ctx, p._id, a.sessionToken);
     if (!canEdit(member)) throw new ConvexError("You have view-only access");
     await ctx.db.patch(p._id, { githubRepoState: "pending", githubRepoError: undefined });

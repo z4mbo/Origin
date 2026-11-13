@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { DRAFT_COLUMN_TITLE, isDraftColumn, isLegacyIdeaColumn, normalizedColumnTitle } from "../../lib/origin-columns";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { liveProject } from "./permissions";
 
 export { compareWorkflowColumns, DEFAULT_WORKFLOW_COLUMNS, isDraftColumn, normalizedColumnTitle as normalizeColumnTitle } from "../../lib/origin-columns";
 
@@ -23,7 +24,7 @@ export function compareStoredColumns(a: Doc<"columns">, b: Doc<"columns">): numb
 
 export async function ensureDraftColumn(ctx: MutationCtx, projectId: Id<"projects">, options?: { completeLegacyScan: true }): Promise<{ column: Doc<"columns">; created: boolean; changed: boolean; adopted: boolean }> {
   const [project, flagged, first, legacy] = await Promise.all([
-    ctx.db.get(projectId),
+    liveProject(ctx, projectId),
     ctx.db.query("columns").withIndex("by_projectId_and_isDraft_and_order", q => q.eq("projectId", projectId).eq("isDraft", true)).first(),
     ctx.db.query("columns").withIndex("by_project_order", q => q.eq("projectId", projectId)).first(),
     ctx.db.query("columns").withIndex("by_project_order", q => q.eq("projectId", projectId)).take(101),

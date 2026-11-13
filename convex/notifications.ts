@@ -3,14 +3,14 @@ import { paginationOptsValidator } from "convex/server";
 import { mutation, query, internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { getActiveTeamMember, projectMember, requireTeamMember } from "./lib/permissions";
+import { getActiveTeamMember, projectMember, requireTeamMember, liveProject } from "./lib/permissions";
 import { projectIconTypeValidator } from "./lib/validators";
 
 export async function notify(ctx: MutationCtx, a: { teamId: Id<"teams">; email: string; actorId: Id<"users">; kind: "assignment" | "comment" | "mention"; eventId: string; projectId?: Id<"projects">; taskId?: Id<"tasks">; messageId?: string; conversation?: string; agentThreadId?: Id<"agentThreads">; preview?: string }) {
   const user = await ctx.db.query("users").withIndex("by_email", q => q.eq("email", a.email)).unique();
   if (!user || user.status !== "active" || user._id === a.actorId || !await getActiveTeamMember(ctx, a.teamId, user.email)) return;
   if (a.projectId) {
-    const project = await ctx.db.get(a.projectId);
+    const project = await liveProject(ctx, a.projectId);
     if (!project || project.teamId !== a.teamId || project.status !== "active" || !await projectMember(ctx, project, user)) return;
   }
   const preferences = await ctx.db.query("notificationPreferences").withIndex("by_teamId_and_userId", q => q.eq("teamId", a.teamId).eq("userId", user._id)).unique();
@@ -34,14 +34,14 @@ export const summary = query({
     const visible = [];
     for (const row of rows) {
       if (row.kind === "lead") continue;
-      const project = row.projectId ? await ctx.db.get(row.projectId) : null;
+      const project = row.projectId ? await liveProject(ctx, row.projectId) : null;
       if (!row.projectId || (project?.status === "active" && await projectMember(ctx, project, user))) visible.push(row);
     }
     const recent = await ctx.db.query("notifications").withIndex("by_user_team", q => q.eq("userId", user._id).eq("teamId", a.teamId)).order("desc").take(100);
     let latest: string | null = null;
     for (const row of recent) {
       if (row.kind === "lead") continue;
-      const project = row.projectId ? await ctx.db.get(row.projectId) : null;
+      const project = row.projectId ? await liveProject(ctx, row.projectId) : null;
       if (!row.projectId || (project?.status === "active" && await projectMember(ctx, project, user))) { latest = row._id; break; }
     }
     return { unread: Math.min(visible.length, 99), more: visible.length === 100, latest };
@@ -60,7 +60,7 @@ export const list = query({
     const query = a.unreadOnly ? ctx.db.query("notifications").withIndex("by_user_team_read", q => q.eq("userId", user._id).eq("teamId", a.teamId).eq("read", false)) : ctx.db.query("notifications").withIndex("by_user_team", q => q.eq("userId", user._id).eq("teamId", a.teamId));
     const page = await query.order("desc").paginate({ ...a.paginationOpts, numItems: Math.min(a.paginationOpts.numItems, 50) });
     const visible = await Promise.all(page.page.map(async row => {
-      const actor = await ctx.db.get(row.actorId), project = row.projectId ? await ctx.db.get(row.projectId) : null, task = row.taskId ? await ctx.db.get(row.taskId) : null;
+      const actor = await ctx.db.get(row.actorId), project = row.projectId ? await liveProject(ctx, row.projectId) : null, task = row.taskId ? await ctx.db.get(row.taskId) : null;
       const digest = row.digestId ? await ctx.db.get(row.digestId) : null;
       if (row.kind === "lead") return null;
       if (row.projectId && (!project || !await projectMember(ctx, project, user) || (a.unreadOnly && project.status !== "active"))) return null;
@@ -136,7 +136,7 @@ export const chatMentions = internalMutation({
     const target = chatTarget(ctx, a.conversation);
     if (!target) throw new ConvexError("Invalid mention");
     if (target.members && !target.members.includes(a.actorId)) throw new ConvexError("Invalid mention");
-    if (target.projectId && (await ctx.db.get(target.projectId))?.teamId !== a.teamId) return null;
+    if (target.projectId && (await liveProject(ctx, target.projectId))?.teamId !== a.teamId) return null;
     if (!actor || actor.status !== "active" || !await getActiveTeamMember(ctx, a.teamId, actor.email)) return null;
     const located = a.conversation === undefined ? {} : { conversation: a.conversation, ...(target.projectId ? { projectId: target.projectId } : {}) };
     const preview = a.preview ? clip(a.preview) : "";

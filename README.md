@@ -76,9 +76,9 @@ claude mcp add --transport http origin https://<your-origin>/api/mcp --header "A
 
 Revoke connections and tokens in Settings → Agents.
 
-## Issue webhooks
+## Issue and project webhooks
 
-Origin can POST an event when an issue is created (`issue.created`) and when its status or completion changes (`issue.updated`; title and description edits send nothing). Set a URL and signing secret per workspace in Settings → Workspace, or a deployment-wide default in the Convex env (the workspace's own wins):
+Origin can POST an event when an issue is created (`issue.created`), when its status or completion changes (`issue.updated`; title and description edits send nothing), when an agent is put on or taken off an issue (`issue.delegated`), and when a project is created (`project.created`) or deleted (`project.deleted`). Set a URL and signing secret per workspace in Settings → Workspace, or a deployment-wide default in the Convex env (the workspace's own wins):
 
 ```sh
 npx convex env set ORIGIN_ISSUE_WEBHOOK_URL https://hooks.example.com/origin
@@ -98,11 +98,37 @@ Each request has `Content-Type: application/json`, `X-Origin-Event`, `X-Origin-D
 }
 ```
 
-`changes` is `null` for `issue.created`; for `issue.updated` it has `status` and/or `completed`, each `{ from, to }`. To try a receiver without a workspace:
+`changes` is `null` for `issue.created`; for `issue.updated` it has `status` and/or `completed`, each `{ from, to }`.
+
+### Project events
+
+`project.created` is sent for every new project in a workspace (from the app or a connector), and `project.deleted` once, when an admin starts deleting a project (its issues are then removed without any `issue.*` events). They use the same URL, secret, headers, retries and OpenBot envelope as issue events, so a receiver can keep one agent per project. Body (see `projectWebhookPayload` in `lib/issue-webhook.ts`):
+
+```json
+{
+  "id": "evt_…", "type": "project.created", "occurredAt": "2026-11-13T09:00:00.000Z",
+  "workspace": { "id": "…", "name": "Acme", "slug": "acme" },
+  "project": { "id": "…", "name": "Web", "description": "Marketing site", "repo": "acme/web", "repoUrl": "https://github.com/acme/web",
+    "url": "https://origin.example.com/acme?project=…", "createdAt": "2026-11-13T09:00:00.000Z" },
+  "actor": { "name": "Ada", "email": "ada@acme.example" }
+}
+```
+
+`repo` and `repoUrl` are `null` without a repository; `actor` is who created or deleted the project (`null` when unknown). `description` is cut at 4,000 characters, so bodies stay far under 64 KB. `project.deleted` describes the project as it was when deletion started. Deleting a whole workspace sends no `project.deleted` events, and projects created outside a workspace (`importRepos`, legacy imports) send no `project.created`: there is no workspace webhook to send them to.
+
+### OpenBot routines
+
+When the URL is an OpenBot routine (`https://signal.openbot.run/v1/webhooks/…`), the body is `{ "type", "occurredAt", "data" }` with the payload above as `data`, signed in `X-OpenBot-Signature: sha256=<hex>` over `<X-OpenBot-Timestamp>.<X-OpenBot-Delivery-Id>.<body>`, for issue and project events alike.
+
+To try a receiver without a workspace:
 
 ```sh
-ORIGIN_ISSUE_WEBHOOK_SECRET='…' node scripts/origin-webhook-test.mjs --url http://127.0.0.1:8787/hook [--event issue.updated]
+ORIGIN_ISSUE_WEBHOOK_SECRET='…' node scripts/origin-webhook-test.mjs --url http://127.0.0.1:8787/hook [--event issue.updated|issue.delegated|project.created|project.deleted]
 ```
+
+## Deleting a project
+
+Project Settings → Danger zone → Delete project (workspace owners and admins, and project admins) asks for the project's name. The project disappears for everyone at once, `project.deleted` is sent, and its issues, comments, attachments, assets, wiki, vault entries, chat, drawings and other rows are purged in the background in bounded steps (`convex/projectDeletion.ts`; a cron resumes a stalled purge). Its GitHub repository, issues and pull requests are left as they are; queued GitHub sync work is dropped. Deactivate is the reversible alternative.
 
 ## License
 

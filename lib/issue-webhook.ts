@@ -1,18 +1,25 @@
 /**
- * Outgoing issue webhooks: the payload Origin POSTs when an issue is created or its status changes, and its
- * signature. Shared by Convex (convex/issueWebhooks.ts), scripts/origin-webhook-test.mjs and the tests, so it imports
- * nothing and uses only WebCrypto.
+ * Outgoing issue and project webhooks: the payload Origin POSTs when an issue is created or its status changes, or a
+ * project is created or deleted, and its signature. Shared by Convex (convex/issueWebhooks.ts),
+ * scripts/origin-webhook-test.mjs and the tests, so it imports nothing and uses only WebCrypto.
  *
- * Headers: `X-Origin-Event` (issue.created | issue.updated | issue.delegated), `X-Origin-Delivery` (the event id),
+ * Headers: `X-Origin-Event` (issue.created | issue.updated | issue.delegated | project.created | project.deleted),
+ * `X-Origin-Delivery` (the event id),
  * `X-Origin-Signature: sha256=<hex>` (HMAC-SHA256 of the raw body under the webhook secret, like GitHub's), and
  * optionally `Authorization: Bearer <token>` when the workspace saved one (in addition to the signature).
  *
  * issue.delegated fires when an issue is delegated to an agent, or the agent is removed. Its `issue.delegate` is the
  * agent now on the issue (null when removed) and `changes.delegate` names the agent before and after. Other events
  * carry `issue.delegate` only while an agent is on the issue, so payloads for issues without one are unchanged.
+ *
+ * project.created and project.deleted share the envelope (id, type, occurredAt, workspace) and carry `project` and
+ * `actor` instead of `issue` and `changes`, so a receiver can keep one agent per project in step with Origin.
  */
 
 export type IssueWebhookEvent = "issue.created" | "issue.updated" | "issue.delegated";
+export type ProjectWebhookEvent = "project.created" | "project.deleted";
+export type OriginWebhookEvent = IssueWebhookEvent | ProjectWebhookEvent;
+export const ORIGIN_WEBHOOK_EVENTS: readonly OriginWebhookEvent[] = ["issue.created", "issue.updated", "issue.delegated", "project.created", "project.deleted"];
 export type IssueWebhookCriterion = { text: string; checked: boolean };
 export type IssueWebhookDelegate = { id: string; name: string };
 export type IssueWebhookChanges = {
@@ -100,6 +107,50 @@ export function issueWebhookPayload(input: IssueWebhookInput): IssueWebhookPaylo
   };
 }
 
+export type ProjectWebhookPayload = {
+  id: string;
+  type: ProjectWebhookEvent;
+  occurredAt: string;
+  workspace: { id: string; name: string; slug: string };
+  project: { id: string; name: string; description: string; repo: string | null; repoUrl: string | null; url: string; createdAt: string };
+  actor: { name: string; email: string } | null;
+};
+export type ProjectWebhookInput = {
+  id?: string;
+  type: ProjectWebhookEvent;
+  occurredAt: number;
+  workspace: { id: string; name: string; slug: string };
+  project: { id: string; name: string; description?: string; repoUrl?: string; createdAt: number };
+  actor?: { name?: string; email: string } | null;
+  /** ORIGIN_PUBLIC_URL; without it `project.url` stays a path. */
+  origin?: string;
+};
+
+/** Descriptions are cut to this many characters so a project payload stays far under 64 KB. */
+export const PROJECT_WEBHOOK_DESCRIPTION_MAX = 4000;
+
+/** The project payload with its keys in the documented order, so `JSON.stringify` of it is the exact body. */
+export function projectWebhookPayload(input: ProjectWebhookInput): ProjectWebhookPayload {
+  const origin = input.origin?.trim().replace(/\/+$/, "") ?? "";
+  const repoUrl = input.project.repoUrl?.trim() || null;
+  return {
+    id: input.id ?? issueWebhookEventId(),
+    type: input.type,
+    occurredAt: new Date(input.occurredAt).toISOString(),
+    workspace: { id: input.workspace.id, name: input.workspace.name, slug: input.workspace.slug },
+    project: {
+      id: input.project.id,
+      name: input.project.name,
+      description: (input.project.description ?? "").slice(0, PROJECT_WEBHOOK_DESCRIPTION_MAX),
+      repo: repositorySlug(repoUrl ?? undefined),
+      repoUrl,
+      url: `${origin}/${input.workspace.slug}?project=${encodeURIComponent(input.project.id)}`,
+      createdAt: new Date(input.project.createdAt).toISOString(),
+    },
+    actor: input.actor?.email ? { name: input.actor.name || input.actor.email, email: input.actor.email } : null,
+  };
+}
+
 async function hmacHex(message: string, secret: string) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -123,8 +174,8 @@ export function isOpenBotWebhookUrl(value: string) {
 }
 
 /** The OpenBot body and headers for one delivery of an Origin event body; `data` is the unchanged Origin payload. */
-export async function openBotWebhookRequest(event: IssueWebhookEvent, deliveryId: string, originBody: string, secret: string, now = Date.now()) {
-  const payload = JSON.parse(originBody) as IssueWebhookPayload;
+export async function openBotWebhookRequest(event: OriginWebhookEvent, deliveryId: string, originBody: string, secret: string, now = Date.now()) {
+  const payload = JSON.parse(originBody) as IssueWebhookPayload | ProjectWebhookPayload;
   const body = JSON.stringify({ type: event, occurredAt: payload.occurredAt, data: payload });
   const timestamp = String(Math.floor(now / 1000));
   return {
@@ -141,7 +192,7 @@ export async function openBotWebhookRequest(event: IssueWebhookEvent, deliveryId
 }
 
 /** The exact body and headers of one delivery. */
-export async function issueWebhookRequest(payload: IssueWebhookPayload, secret: string) {
+export async function issueWebhookRequest(payload: IssueWebhookPayload | ProjectWebhookPayload, secret: string) {
   const body = JSON.stringify(payload);
   return {
     body,
@@ -174,7 +225,24 @@ export function issueWebhookUrlError(value: string) {
   return null;
 }
 
-/** A sample event for scripts/origin-webhook-test.mjs. */
+/** A sample project event for scripts/origin-webhook-test.mjs. */
+export function sampleProjectWebhookPayload(type: ProjectWebhookEvent = "project.created", origin?: string) {
+  return projectWebhookPayload({
+    type,
+    occurredAt: Date.now(),
+    workspace: { id: "sample_workspace", name: "Sample", slug: "sample" },
+    project: { id: "sample_project", name: "Origin", description: "The team workspace", repoUrl: "https://github.com/z4mbo/Origin", createdAt: Date.UTC(2026, 0, 1) },
+    actor: { name: "Sample Admin", email: "admin@example.com" },
+    origin,
+  });
+}
+
+/** A sample event of any type for scripts/origin-webhook-test.mjs. */
+export function sampleWebhookPayload(type: OriginWebhookEvent = "issue.created", origin?: string) {
+  return type === "project.created" || type === "project.deleted" ? sampleProjectWebhookPayload(type, origin) : sampleIssueWebhookPayload(type, origin);
+}
+
+/** A sample issue event for scripts/origin-webhook-test.mjs. */
 export function sampleIssueWebhookPayload(type: IssueWebhookEvent = "issue.created", origin?: string) {
   const agent = { id: "sample_agent", name: "Grok Bot" };
   return issueWebhookPayload({

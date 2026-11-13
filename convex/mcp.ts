@@ -4,7 +4,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { authorize, insertConnectorGrant } from "./connectors";
 import { hashToken } from "./lib/auth";
-import { canEdit, projectMember, projectPeople, requireTeamMember } from "./lib/permissions";
+import { canEdit, projectMember, projectPeople, requireTeamMember, liveProject } from "./lib/permissions";
 import { compareWorkflowColumns, isDoneColumn, isDraftColumn, normalizeColumnTitle } from "./lib/columns";
 import { priorityValidator } from "./lib/validators";
 import { addCommentRecord, changeCriteriaRecord, createTaskRecord, moveTaskRecord, updateTaskRecord } from "./tasks";
@@ -84,7 +84,7 @@ async function findIssue(ctx: Ctx, access: Access, ref: string) {
 
 async function resolveIssue(ctx: Ctx, access: Access, ref: string, write = false) {
   const task = await findIssue(ctx, access, ref);
-  const project = task ? await ctx.db.get(task.projectId) : null;
+  const project = task ? await liveProject(ctx, task.projectId) : null;
   const member = project?.teamId === access.grant.teamId ? await projectMember(ctx, project, access.user) : null;
   if (!task || !project || !member) throw new ConvexError(`Issue not found: ${ref}. Use the issue id or key from list_issues.`);
   if (write && !canEdit(member)) throw new ConvexError("You have read-only access to this project");
@@ -463,7 +463,7 @@ export const asset = query({
     const libraryId = ctx.db.normalizeId("designAssets", a.assetId.trim());
     const issueAssetId = ctx.db.normalizeId("taskAssets", a.assetId.trim());
     const row = libraryId ? await ctx.db.get(libraryId) : issueAssetId ? await ctx.db.get(issueAssetId) : null;
-    const project = row ? await ctx.db.get(row.projectId) : null;
+    const project = row ? await liveProject(ctx, row.projectId) : null;
     if (!row || !project || project.teamId !== access.grant.teamId || !await projectMember(ctx, project, access.user)) throw missing;
     if (libraryId) return json(await libraryAsset(ctx, project, row as Doc<"designAssets">, true));
     const attachment = row as Doc<"taskAssets">;

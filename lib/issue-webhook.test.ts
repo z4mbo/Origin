@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   isOpenBotWebhookUrl, issueWebhookChanges, issueWebhookPayload, issueWebhookRequest, issueWebhookUrlError, openBotWebhookRequest, repositorySlug, sampleIssueWebhookPayload, signIssueWebhook,
+  ORIGIN_WEBHOOK_EVENTS, PROJECT_WEBHOOK_DESCRIPTION_MAX, projectWebhookPayload, sampleWebhookPayload,
 } from "./issue-webhook";
 
 const input = {
@@ -108,5 +109,53 @@ describe("OpenBot webhook delivery", () => {
     expect(request.headers["X-OpenBot-Timestamp"]).toBe(timestamp);
     expect(request.headers["X-OpenBot-Delivery-Id"]).toBe("evt_1");
     expect(request.headers["X-OpenBot-Signature"]).toBe(await signIssueWebhook(`${timestamp}.evt_1.${request.body}`, secret));
+  });
+});
+
+describe("project webhook payload", () => {
+  const project = {
+    id: "project_webhook_1", type: "project.created" as const, occurredAt: Date.UTC(2026, 10, 13, 9),
+    workspace: { id: "team1", name: "Acme", slug: "acme" },
+    project: { id: "project1", name: "Web", description: " Marketing site ", repoUrl: "https://github.com/acme/web.git", createdAt: Date.UTC(2026, 10, 1) },
+    actor: { name: "Ada", email: "ada@acme.test" },
+  };
+
+  test("has the documented shape and key order, with an absolute project url", () => {
+    const payload = projectWebhookPayload({ ...project, origin: "https://origin.example/" });
+    expect(JSON.stringify(payload)).toBe(JSON.stringify({
+      id: "project_webhook_1", type: "project.created", occurredAt: "2026-11-13T09:00:00.000Z",
+      workspace: { id: "team1", name: "Acme", slug: "acme" },
+      project: { id: "project1", name: "Web", description: " Marketing site ", repo: "acme/web", repoUrl: "https://github.com/acme/web.git", url: "https://origin.example/acme?project=project1", createdAt: "2026-11-01T00:00:00.000Z" },
+      actor: { name: "Ada", email: "ada@acme.test" },
+    }));
+  });
+
+  test("a project without a repository or known actor sends nulls; the url stays a path without an origin", () => {
+    const payload = projectWebhookPayload({ ...project, type: "project.deleted", project: { ...project.project, repoUrl: undefined, description: undefined }, actor: null });
+    expect(payload.project).toMatchObject({ description: "", repo: null, repoUrl: null, url: "/acme?project=project1" });
+    expect(payload.actor).toBeNull();
+    expect(payload.id).toBe("project_webhook_1");
+    expect(projectWebhookPayload({ ...project, id: undefined }).id).toMatch(/^evt_[0-9a-f]{24}$/);
+  });
+
+  test("a huge description is cut so the body stays under 64 KB", () => {
+    const payload = projectWebhookPayload({ ...project, project: { ...project.project, description: "x".repeat(200_000) } });
+    expect(payload.project.description).toHaveLength(PROJECT_WEBHOOK_DESCRIPTION_MAX);
+    expect(new TextEncoder().encode(JSON.stringify(payload)).length).toBeLessThan(64 * 1024);
+  });
+
+  test("OpenBot gets the project payload as data, signed like issue events", async () => {
+    const payload = projectWebhookPayload(project);
+    const secret = "s".repeat(32);
+    const now = Date.UTC(2026, 10, 13, 10);
+    const request = await openBotWebhookRequest("project.created", payload.id, JSON.stringify(payload), secret, now);
+    expect(JSON.parse(request.body)).toEqual({ type: "project.created", occurredAt: payload.occurredAt, data: payload });
+    expect(request.headers["X-Origin-Event"]).toBe("project.created");
+    expect(request.headers["X-OpenBot-Signature"]).toBe(await signIssueWebhook(`${now / 1000}.${payload.id}.${request.body}`, secret));
+  });
+
+  test("the test script has a sample for every event", () => {
+    for (const type of ORIGIN_WEBHOOK_EVENTS) expect(sampleWebhookPayload(type).type).toBe(type);
+    expect(sampleWebhookPayload("project.deleted")).toMatchObject({ project: { repo: "z4mbo/Origin" }, actor: { email: "admin@example.com" } });
   });
 });

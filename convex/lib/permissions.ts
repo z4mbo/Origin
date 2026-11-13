@@ -40,9 +40,20 @@ export async function requireTeamAdmin(ctx: Ctx, teamId: Id<"teams">, sessionTok
   return { member, user };
 }
 
+/** A project being deleted (convex/projectDeletion.ts) is gone for everyone but its purge. */
+export function isDeleting(project: Pick<Doc<"projects">, "deletingAt">) {
+  return project.deletingAt !== undefined;
+}
+
+/** The project, or null when it does not exist or is being deleted; use it wherever a missing project is skipped. */
+export async function liveProject(ctx: Ctx, projectId: Id<"projects">) {
+  const project = await ctx.db.get(projectId);
+  return project && !isDeleting(project) ? project : null;
+}
+
 export async function requireMember(ctx: Ctx, projectId: Id<"projects">, sessionToken: string) {
   const user = await requireUser(ctx, sessionToken);
-  const project = await ctx.db.get(projectId);
+  const project = await liveProject(ctx, projectId);
   if (!project) throw new ConvexError("Project not found");
   const member = await projectMember(ctx, project, user);
   if (member) return { member, user, project };
@@ -52,6 +63,7 @@ export async function requireMember(ctx: Ctx, projectId: Id<"projects">, session
 // Workspace admins see every project; everyone else needs explicit membership.
 // A project role can never bypass a read-only workspace role.
 export async function projectMember(ctx: Ctx, project: Doc<"projects">, user: Pick<Doc<"users">, "_id" | "email">) {
+  if (isDeleting(project)) return null;
   const team = project.teamId ? await getActiveTeamMember(ctx, project.teamId, user.email) : null;
   if (project.teamId && (!team || (team.userId && team.userId !== user._id))) return null;
   if (team && ["owner", "admin"].includes(team.role)) return team;

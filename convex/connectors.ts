@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { hashToken } from "./lib/auth";
-import { canEdit, getActiveTeamMember, projectMember, projectPeople, requireTeamMember, visibleProjectRows } from "./lib/permissions";
+import { canEdit, getActiveTeamMember, projectMember, projectPeople, requireTeamMember, visibleProjectRows, liveProject } from "./lib/permissions";
 import { createProjectRecord } from "./projects";
 import { createTaskRecord, deleteTaskRecord, updateTaskRecord } from "./tasks";
 import { priorityValidator } from "./lib/validators";
@@ -25,7 +25,7 @@ export async function authorize(ctx: QueryCtx | MutationCtx, token: string, writ
   const member = user?.status === "active" ? await getActiveTeamMember(ctx, grant.teamId, user.email) : null;
   if (!user || !member || (member.userId && member.userId !== user._id) || (write && (!grant.write || !canEdit(member)))) throw new ConvexError("This connection does not allow that");
   if (projectId) {
-    const project = await ctx.db.get(projectId);
+    const project = await liveProject(ctx, projectId);
     const access = project && await projectMember(ctx, project, user);
     if (project?.teamId !== grant.teamId || !access || (write && !canEdit(access))) throw new ConvexError("Project not found in authorized workspace");
   }
@@ -104,7 +104,7 @@ export const read = query({
       const notifications = [];
       for (const row of p.page) {
         if (run && row.projectId !== run.projectId) continue;
-        const project = row.projectId ? await ctx.db.get(row.projectId) : null;
+        const project = row.projectId ? await liveProject(ctx, row.projectId) : null;
         if (row.projectId && (!project || !await projectMember(ctx, project, user))) continue;
         // Chat content is outside the connector grant; expose only the mention event.
         notifications.push({ id: row._id, kind: row.kind, read: row.read, createdAt: row.createdAt, projectId: row.projectId, projectName: project?.name, taskId: row.taskId });

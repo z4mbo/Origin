@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireUser } from "./auth";
-import { getActiveTeamMember, projectMember } from "./permissions";
+import { getActiveTeamMember, projectMember, liveProject } from "./permissions";
 
 type Ctx = QueryCtx | MutationCtx;
 type Person = Pick<Doc<"users">, "_id" | "email">;
@@ -36,7 +36,7 @@ export async function agentAccess(ctx: Ctx, agent: Doc<"workspaceAgents">, user:
   if (!membership) return null;
   let role: Role = membership.role;
   if (agent.projectId) {
-    const project = await ctx.db.get(agent.projectId);
+    const project = await liveProject(ctx, agent.projectId);
     if (!project || project.teamId !== agent.teamId) return null;
     const member = await projectMember(ctx, project, user);
     if (!member) return null;

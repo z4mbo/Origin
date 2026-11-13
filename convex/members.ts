@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
-import { getActiveTeamMember, normalizeEmail, projectPeople, requireAdmin, requireMember } from "./lib/permissions";
+import { getActiveTeamMember, normalizeEmail, projectPeople, requireAdmin, requireMember, liveProject } from "./lib/permissions";
 import { roleValidator } from "./lib/validators";
 import { reviewGitHubAccess } from "./lib/githubAccess";
 
@@ -56,7 +56,7 @@ export const getInvite = query({
       .withIndex("by_token", (q) => q.eq("inviteToken", args.token))
       .unique();
     if (invite?.status === "invited") {
-      const project = await ctx.db.get(invite.projectId);
+      const project = await liveProject(ctx, invite.projectId);
       if (!project) return null;
       return {
         projectId: invite.projectId,
@@ -96,7 +96,7 @@ export const invite = mutation({
     const { user } = await requireAdmin(ctx, args.projectId, args.sessionToken);
     if (args.role === "owner") throw new ConvexError("Invite people as admin, member or viewer");
 
-    const project = await ctx.db.get(args.projectId);
+    const project = await liveProject(ctx, args.projectId);
     if (!project) throw new ConvexError("Project not found");
 
     const now = Date.now();

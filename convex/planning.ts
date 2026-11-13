@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { mutation, query } from "./_generated/server";
-import { canEdit, requireMember, requireTeamAdmin, requireTeamMember, visibleProjectRows } from "./lib/permissions";
+import { canEdit, requireMember, requireTeamAdmin, requireTeamMember, visibleProjectRows, liveProject } from "./lib/permissions";
 import { cleanText, requireWorkspaceEditor, validDay, workspaceProject } from "./lib/features";
 
 const scope = { sessionToken: v.string(), teamId: v.id("teams") };
@@ -79,7 +79,7 @@ export const releases = query({
     const rows = await ctx.db.query("releases").withIndex("by_teamId_and_createdAt", q => q.eq("teamId", args.teamId)).order("desc").paginate({ ...args.paginationOpts, numItems: Math.min(10, args.paginationOpts.numItems) });
     const page = await Promise.all((await visibleProjectRows(ctx, rows.page, user)).map(async row => {
       const links = await ctx.db.query("releaseIssues").withIndex("by_releaseId", q => q.eq("releaseId", row._id)).take(200);
-      const projectName = (await ctx.db.get(row.projectId))?.name || "Deleted project";
+      const projectName = (await liveProject(ctx, row.projectId))?.name || "Deleted project";
       const tasks = await Promise.all(links.map(link => ctx.db.get(link.taskId)));
       return { _id: row._id, projectId: row.projectId, projectName, version: row.version, body: row.body, publishedAt: row.publishedAt, issues: tasks.flatMap(task => task ? [{ _id: task._id, title: task.title, done: task.done, projectId: task.projectId, projectName, githubIssueUrl: task.githubIssueUrl }] : []) };
     }));

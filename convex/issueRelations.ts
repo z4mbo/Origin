@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { canEdit, projectMember, requireMember } from "./lib/permissions";
+import { canEdit, projectMember, requireMember, liveProject } from "./lib/permissions";
 import type { Id } from "./_generated/dataModel";
 import { cleanLabels, projectLabels, registerLabels, workspaceLabelRows } from "./lib/labels";
 import { queueGitHubSync } from "./lib/githubIssueSync";
@@ -20,7 +20,7 @@ export const list = query({
       if (row.teamId !== project.teamId) continue;
       const outgoing = row.fromTaskId === args.taskId;
       const other = await ctx.db.get(outgoing ? row.toTaskId : row.fromTaskId);
-      const target = other && await ctx.db.get(other.projectId);
+      const target = other && await liveProject(ctx, other.projectId);
       if (other && target && target.teamId === project.teamId && await projectMember(ctx, target, user)) relations.push({ _id: row._id, kind: row.kind, outgoing, taskId: other._id, projectId: other.projectId, title: other.title, done: other.done });
     }
     return { labels: task.labels || [], relations };

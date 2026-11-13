@@ -2,7 +2,7 @@ import * as Y from "yjs";
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { canEdit, requireMember, requireTeamMember, visibleProjectRows } from "./lib/permissions";
+import { canEdit, requireMember, requireTeamMember, visibleProjectRows, liveProject } from "./lib/permissions";
 import { cleanText, workspaceProject } from "./lib/features";
 import { wikiTypeValidator } from "./lib/validators";
 
@@ -12,7 +12,7 @@ export const backfill = internalMutation({
   handler: async (ctx, args) => {
     const batch = await ctx.db.query("wikiPages").paginate({ cursor: args.cursor, numItems: 100 });
     for (const page of batch.page) {
-      const project = await ctx.db.get(page.projectId);
+      const project = await liveProject(ctx, page.projectId);
       if (project?.teamId && page.teamId !== project.teamId) await ctx.db.patch(page._id, { teamId: project.teamId });
     }
     if (!batch.isDone) await ctx.scheduler.runAfter(0, internal.documents.backfill, { cursor: batch.continueCursor });
