@@ -1,12 +1,12 @@
 "use client";
 import { errorText } from "@/lib/error-text";
-import { isDraftColumn, presentColumns } from "@/lib/origin-columns";
+import { isDoneColumn, isDraftColumn, presentColumns } from "@/lib/origin-columns";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
 import clsx from "clsx";
-import { Archive, ArrowRight, Check, CheckCircle2, Circle, Columns3, List, MoreHorizontal, PencilLine, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Circle, Columns3, List, MoreHorizontal, PencilLine, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { formatDate } from "@/lib/format";
@@ -26,7 +26,7 @@ import { IssueComposer, TaskModal } from "./lazy-views";
 import { IssueDeleteDialog, IssueToastHost, dismissIssueToast, showIssueToast, subscribeCreatedIssue, type OpenReference, type ProjectWithUi } from "./issue-shared";
 import { IssueSelect } from "./issue-select";
 import { DelayedSkeleton } from "./delayed-skeleton";
-import { DEFAULT_VIEW, ISSUE_TABS, activeFilterCount, groupIssues, inIssueTab, matchesFilters, readIssueView, sortIssues, type DisplayProperty, type IssueTab, type IssueViewState } from "@/lib/issue-view";
+import { DEFAULT_VIEW, ISSUE_TABS, activeFilterCount, boardLanes, groupIssues, inIssueTab, issueTabCounts, matchesFilters, newestCompletedFirst, readIssueView, sortIssues, type DisplayProperty, type IssueTab, type IssueViewState } from "@/lib/issue-view";
 import { DisplayOptions, FilterChips, FilterMenu, filterSources, type PopoverOpener } from "./issue-filters";
 import { useIssueNavigation } from "./issue-navigation";
 import { LabelPopover, useWorkspaceLabels } from "./issue-labels";
@@ -76,23 +76,14 @@ function updateTaskOnBoard(store: OptimisticLocalStore, args: UpdateTaskArgs) {
   store.setQuery(api.tasks.board, query, { ...board, tasks });
 }
 
-const isDone = (column: Column) => column.isDone ?? column.title.toLowerCase() === "done";
+const isDone = (column: Column) => isDoneColumn(column);
 
-/**
- * Cards of a board lane in display order; cards whose column is hidden show in Todo (or the first lane). With
- * `withDone` (All issues), the lane's completed issues follow its open ones.
- */
-function laneTasks(board: { columns: Column[]; tasks: Task[] }, columnId: string, matches: (task: Task) => boolean, withDone = false) {
-  const columns = board.columns.filter(column => !isDone(column));
-  const ids = new Set<string>(columns.map(column => column._id));
-  const fallback = columns.find(column => column.title.toLowerCase() === "todo") || columns[0];
-  const inLane = (task: Task) => (ids.has(task.columnId) ? task.columnId : fallback?._id) === columnId && matches(task);
-  const open = board.tasks.filter(task => !task.done && inLane(task));
-  return withDone ? [...open, ...board.tasks.filter(task => task.done && inLane(task))] : open;
+/** Open cards of a board lane in display order. Completed issues never show in a lane (lib/issue-view.ts boardLanes). */
+function laneTasks(board: { columns: Column[]; tasks: Task[] }, columnId: string, matches: (task: Task) => boolean) {
+  return boardLanes(board.columns).tasksIn(board.tasks, columnId, matches);
 }
 const activeLaneTasks = (board: { columns: Column[]; tasks: Task[] }, columnId: string, matches: (task: Task) => boolean) => laneTasks(board, columnId, matches);
-/** Sorted issues with the completed ones kept after the open ones. */
-const orderIssues = (tasks: Task[], ordering: IssueViewState["ordering"]) => ordering === "manual" ? tasks : [...sortIssues(tasks.filter(task => !task.done), ordering), ...sortIssues(tasks.filter(task => task.done), ordering)];
+const orderIssues = (tasks: Task[], ordering: IssueViewState["ordering"]) => ordering === "manual" ? tasks : sortIssues(tasks, ordering);
 
 const layoutKey = (projectId: string) => `origin.issueLayout.${projectId}`;
 const viewKey = (projectId: string) => `origin.issueView.${projectId}`;
@@ -188,11 +179,9 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
   const parents = useQuery(api.issueRoutes.projectParents, view.showSubIssues ? "skip" : { projectId, sessionToken });
   const subIssueIds = useMemo(() => new Set<string>((parents ?? []).map(row => row.taskId)), [parents]);
   const [boardNotice, setBoardNotice] = useState("");
-  /** Completed issues, newest first: a quiet destination beside the view tabs, not a tab of its own. */
-  const [archive, setArchive] = useState(false);
-  const setTab = (tab: IssueTab) => { setArchive(false); patchView(() => ({ tab })); };
-  // All issues keeps completed issues in place (after the open ones), unless Display hides them.
-  const withDone = !archive && view.tab === "all" && view.showCompleted;
+  /** The Completed view: completed issues, most recently completed first, each with Reopen. */
+  const archive = view.tab === "completed";
+  const setTab = (tab: IssueTab) => patchView(() => ({ tab }));
   const filterOpener = useRef<PopoverOpener>(null);
   const displayOpener = useRef<PopoverOpener>(null);
   // The open issue lives in the URL; opening one from the board adds a history entry so Back closes it.
@@ -295,8 +284,8 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     if (!board) return true;
     const columns = board.columns.filter(column => !isDone(column));
     const status = columns.find(column => column._id === task.columnId) ?? columns.find(column => column.title.toLowerCase() === "todo") ?? columns[0];
-    // The view tab: Active leaves out the Backlog and completed issues, Backlog shows only the Backlog column.
-    if (!archive && !inIssueTab(task, Boolean(status && isDraftColumn(status)), view.tab, view.showCompleted)) return false;
+    // The view tab: completed issues show only in Completed; Active leaves out the Backlog, Backlog shows only it.
+    if (!inIssueTab(task, Boolean(status && isDraftColumn(status)), view.tab)) return false;
     return !activeFilterCount(view.filters) || matchesFilters(task, view.filters, status?._id ?? "");
   }
   const dnd = useIssueDrag({
@@ -415,9 +404,12 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
   const fallbackColumn = visualColumns.find(column => column.title.toLowerCase() === "todo") || visualColumns[0];
   const columnForTask = (task: Task) => visibleColumnIds.has(task.columnId) ? task.columnId : fallbackColumn?._id;
   const toneOf = (column: Column) => isDraftColumn(column) ? "draft" : laneTone(column.title);
-  const archivedTasks = board.tasks.filter(task => task.done && matches(task)).sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt));
-  const visibleTasks = (columnId: string) => orderIssues(laneTasks(board, columnId, matches, withDone), view.ordering);
-  const listGroups = groupIssues(orderIssues(sortIssues(laneColumns.flatMap(column => laneTasks(board, column._id, matches, withDone)), view.ordering), view.ordering), view.grouping, {
+  // Tab counts: open issues in All, Active and Backlog; completed issues only in Completed.
+  const draftColumnIds = new Set<string>(visualColumns.filter(column => isDraftColumn(column)).map(column => column._id));
+  const tabCounts = issueTabCounts(board.tasks, task => draftColumnIds.has(columnForTask(task as Task) ?? ""));
+  const archivedTasks = newestCompletedFirst(board.tasks.filter(matches));
+  const visibleTasks = (columnId: string) => orderIssues(laneTasks(board, columnId, matches), view.ordering);
+  const listGroups = groupIssues(orderIssues(sortIssues(laneColumns.flatMap(column => laneTasks(board, column._id, matches)), view.ordering), view.ordering), view.grouping, {
     statuses: laneColumns.map(column => ({ id: column._id, title: column.title })),
     statusOf: task => columnForTask(task as Task) ?? "",
     people: [...people.values()].map(person => ({ email: person.email, name: person.name || person.email })),
@@ -446,17 +438,15 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     const hadFocus = Boolean(document.activeElement?.closest(`[data-task-id="${CSS.escape(task._id)}"]`));
     setCompleting(current => ({ ...current, [task._id]: "checked" }));
     const clear = () => setCompleting(current => { const rest = { ...current }; delete rest[task._id]; return rest; });
-    // In All issues the completed card stays where it is, checked.
-    const stays = withDone;
     const commit = () => {
-      const next = stays ? null : neighbourOf(task._id);
+      const next = neighbourOf(task._id);
       updateTask({ projectId, sessionToken, taskId: task._id, done: true })
         .then(() => clear())
         .then(() => showToast("Completed", () => void updateTask({ projectId, sessionToken, taskId: task._id, done: false }).then(() => { dismissIssueToast(); focusCard(task._id); }).catch(report("Could not reopen issue"))))
         .catch(error => { clear(); cardElement(boardScroll.current, task._id)?.getAnimations().forEach(animation => animation.cancel()); report("Could not complete issue")(error); });
       if (hadFocus || document.activeElement === document.body) focusCard(next);
     };
-    if (reduced || stays) { later(commit, stays ? COLLAPSE_MS : 150); return; }
+    if (reduced) { later(commit, 150); return; }
     later(() => {
       const found = cardElement(boardScroll.current, task._id);
       // Cards fold away; list rows simply leave.
@@ -571,14 +561,13 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     target.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
+  /** Reopen: the server puts the issue back in its previous column, or the first workflow column after Backlog. */
   const reopen = async (task: Task, fromMenu = false) => {
-    const target = columnForTask(task);
-    if (!target) { setBoardNotice("Add a workflow column before reopening an issue"); return; }
+    if (!visualColumns.length) { setBoardNotice("Add a workflow column before reopening an issue"); return; }
     // The row leaves the completed list: keep focus on the list.
     const hadFocus = fromMenu || Boolean(document.activeElement?.closest(`[data-task-id="${CSS.escape(task._id)}"]`)) || document.activeElement === document.body;
-    const next = withDone ? task._id : neighbourOf(task._id);
+    const next = neighbourOf(task._id);
     try {
-      if (!visibleColumnIds.has(task.columnId)) await moveTask({ projectId, sessionToken, taskId: task._id, columnId: target as Id<"columns"> });
       await updateTask({ projectId, sessionToken, taskId: task._id, done: false });
       if (hadFocus) focusCard(next);
     } catch (error) { setBoardNotice(errorText(error, "Could not reopen issue")); }
@@ -613,7 +602,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     catch (error) { setBoardNotice(errorText(error, "Could not rename column")); }
   };
   const filtered = Boolean(filter || activeFilterCount(view.filters));
-  /** The check on an open issue completes it; on a completed one (All issues) it reopens it. */
+  /** The check on an open issue completes it; on a completed one it reopens it. */
   const toggleDone = (task: Task) => { if (task.done) void reopen(task); else complete(task); };
   const sources = filterSources({ statuses: laneColumns.map(column => ({ id: column._id, title: column.title })), people: [...people.values()], labels: (workspaceLabels?.labels ?? []).filter(label => !label.archived) });
   const statusOf = (task: Task) => visualColumns.find(column => column._id === columnForTask(task));
@@ -627,14 +616,16 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     requestAnimationFrame(() => event.currentTarget.querySelector<HTMLElement>(`[data-view="${next.value}"]`)?.focus());
   }}>
     {ISSUE_TABS.map(item => {
-      const selected = !archive && view.tab === item.value;
-      return <button key={item.value} type="button" role="tab" className="view-tab" data-view={item.value} aria-selected={selected} tabIndex={selected || (archive && item.value === view.tab) ? 0 : -1} aria-keyshortcuts={item.key} title={`${item.label} (${item.key})`} onClick={() => setTab(item.value)}>{item.value === "all" ? <><span className="view-tab-long">All issues</span><span className="view-tab-short">All</span></> : item.label}</button>;
+      const selected = view.tab === item.value;
+      return <button key={item.value} type="button" role="tab" className={clsx("view-tab", item.value === "completed" && "view-tab-completed")} data-view={item.value} aria-selected={selected} tabIndex={selected ? 0 : -1} aria-keyshortcuts={item.key} title={`${item.label} (${item.key})${item.value === "completed" ? ", most recently completed first" : ""}`} onClick={() => setTab(item.value)}>
+        {item.value === "all" ? <><span className="view-tab-long">All issues</span><span className="view-tab-short">All</span></> : item.value === "completed" ? <><CheckCircle2 size={13} aria-hidden="true" /><span className="view-tab-long">Completed</span><span className="view-tab-short">Done</span></> : item.label}
+        <small className="view-tab-count" aria-label={`${tabCounts[item.value]} issues`}>{tabCounts[item.value]}</small>
+      </button>;
     })}
   </div>;
   const toolbar = <>
     <div className="board-header">
       {tabs}
-      <button type="button" className={clsx("icon-button view-archive", archive && "selected")} aria-pressed={archive} aria-label="Completed issues" title="Completed issues, most recent first" onClick={() => setArchive(!archive)}><Archive size={14} /></button>
       <div className="board-header-actions">
         <div className="board-filter-control" ref={filterBox}>
           {filter && !filterOpen
@@ -657,7 +648,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
 
   const archiveView = (
     <div className="archive-list">
-      <div className="archive-caption"><CheckCircle2 size={14} /><span>Completed</span><small>{archivedTasks.length}</small><button type="button" className="archive-lane-link" onClick={() => setArchive(false)}>Back to {ISSUE_TABS.find(item => item.value === view.tab)!.label}</button></div>
+      <div className="archive-caption"><CheckCircle2 size={14} /><span>Completed</span><small>{archivedTasks.length}</small><span className="archive-hint">Most recently completed first</span></div>
       {!archivedTasks.length && <EmptyBlock icon={CheckCircle2} title={filtered ? "No matching issues" : "No completed issues"} body={filtered ? "Change the search or filters to see more." : "Finish something first."} />}
       {archivedTasks.map(task => <div
         key={task._id}
@@ -677,7 +668,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
       >
         <span className="check-done archive-check"><Check size={10} strokeWidth={3} /></span>
         <span className="archive-issue"><span className="issue-key">{taskKey(task._id)}</span><strong>{task.title}</strong></span>
-        <time>{formatDate(task.completedAt ?? task.updatedAt)}</time>
+        <span className="archive-meta">{task.completedByName && <span className="archive-by">{task.completedByName}</span>}<time dateTime={new Date(task.completedAt ?? task.updatedAt).toISOString()} title={`Completed ${new Date(task.completedAt ?? task.updatedAt).toLocaleString()}`}>{formatDate(task.completedAt ?? task.updatedAt)}</time></span>
         {canEdit && <button className="ghost-button compact archive-restore" tabIndex={-1} aria-label={`Reopen ${task.title}`} onClick={event => { event.stopPropagation(); void reopen(task); }}><RotateCcw size={14} /><span>Reopen</span></button>}
       </div>)}
     </div>

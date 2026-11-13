@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canEdit, changeOpenIssueCount, getActiveTeamMember, requireAdmin, requireMember, touchProject, liveProject, isDeleting } from "./lib/permissions";
-import { recordCompletion } from "./lib/completions";
+import { canEdit, getActiveTeamMember, requireAdmin, requireMember, touchProject, liveProject, isDeleting } from "./lib/permissions";
+import { setIssueCompletion } from "./lib/completions";
 import { agentsTables } from "./agentsTables";
 import { internal } from "./_generated/api";
 import { reserveTaskBranch } from "./lib/taskBranches";
@@ -36,11 +36,7 @@ async function completeFromGitHub(ctx: MutationCtx, project: Doc<"projects">, ta
     const id = await ctx.db.insert("columns", { projectId: project._id, title: "Done", isDone: true, order: Math.max(-1, ...columns.map(c => c.order)) + 1, createdAt: Date.now(), updatedAt: Date.now() });
     doneColumn = (await ctx.db.get(id))!;
   }
-  await recordCompletion(ctx, task, true, completedAt);
-  await changeOpenIssueCount(ctx, project._id, -1);
-  await ctx.db.patch(task._id, { done: true, columnId: doneColumn._id, githubIssueReopenRequested: undefined, updatedAt: Date.now() });
-  await issueStatusChanged(ctx, task);
-  await touchProject(ctx, project._id);
+  await setIssueCompletion(ctx, task, true, { actor: { name: "GitHub" }, completedAt, columnId: doneColumn._id, fromGitHub: true });
 }
 
 export const configure = mutation({

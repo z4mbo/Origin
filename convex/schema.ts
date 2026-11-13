@@ -260,6 +260,11 @@ export default defineSchema({
     milestoneId: v.optional(v.id("milestones")),
     teamId: v.optional(v.id("teams")),
     completedAt: v.optional(v.number()),
+    /** Who completed the issue last (convex/lib/completions.ts): the person, or a name such as "GitHub" for merges. */
+    completedBy: v.optional(v.id("users")),
+    completedByName: v.optional(v.string()),
+    /** The column the issue was in when a completion moved it (into a Done column); reopening goes back there. */
+    completedFromColumnId: v.optional(v.id("columns")),
     legacySourceKey: v.optional(v.string()),
     projectId: v.id("projects"),
     columnId: v.id("columns"),

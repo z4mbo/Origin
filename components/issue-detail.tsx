@@ -387,7 +387,7 @@ function TaskModalContent({
   const attachLink = (url: string) => { void addAsset({ projectId, taskId, sessionToken, type: "link", name: url, url }).catch(error => reportError(errorText(error, "Could not attach link"))); };
   const noticeBlock = notice && <div className={clsx("notice issue-detail-notice", notice.tone)} role={notice.tone ? "alert" : "status"}><span>{notice.text}</span><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button></div>;
   const titleBlock = fields && <div className="issue-title-block">
-    {details?.task.done && <span className="issue-completed-badge"><CheckCircle2 size={13} />Completed</span>}
+    {details?.task.done && <span className="issue-completed-badge" title={[details.task.completedByName && `Completed by ${details.task.completedByName}`, details.task.completedAt && new Date(details.task.completedAt).toLocaleString()].filter(Boolean).join(" · ") || undefined}><CheckCircle2 size={13} />Completed</span>}
     <textarea ref={titleInput} className="issue-title-input" aria-label="Issue title" aria-invalid={titleEmpty || undefined} aria-describedby={titleEmpty && titleTouched ? `${taskId}-title-error` : undefined} value={fields.title} placeholder="Issue title" rows={1} maxLength={250} disabled={!canEdit}
       onChange={event => { setTitleTouched(true); setField("title", singleLine(event.target.value)); }}
       onBlur={() => void commit(["title"], fields)}

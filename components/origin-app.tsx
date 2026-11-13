@@ -13,7 +13,7 @@ import { issuePath, legacyIssueParams, parseIssuePath, type IssueRoute } from "@
 import { useLocalVoiceParticipants } from "./use-voice-participants";
 import { taskKey } from "../lib/project-issues";
 import clsx from "clsx";
-import { FolderPlus, Check, ChevronDown, ChevronRight, CircleDot, CircleAlert, ImageUp, Inbox, Loader2, LogOut, Menu, MessageCircle, PenTool, Plus, Search, Settings2, PanelLeftClose, PanelLeftOpen, SquarePen, Video, X, type LucideIcon } from "lucide-react";
+import { FolderPlus, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDot, CircleAlert, ImageUp, Inbox, Loader2, LogOut, Menu, MessageCircle, PenTool, Plus, Search, Settings2, PanelLeftClose, PanelLeftOpen, SquarePen, Video, X, type LucideIcon } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -691,7 +691,7 @@ function SearchDialog({
   const memberResults = value ? members?.filter((member) => `${member.name} ${member.username || ""} ${member.email}`.toLowerCase().includes(value)).slice(0, 8) : members?.slice(0, 5);
   const results = rankSearchResults([
     ...projectResults.map(project => ({ id: `project-${project._id}`, label: project.name, kind: "Project", icon: <ProjectIcon project={project} />, open: () => { onOpenProject(project._id); onClose(); } })),
-    ...(issueResults || []).slice(0, 10).map(task => ({ id: `issue-${task._id}`, label: task.title, kind: taskKey(task._id), icon: <CircleDot size={16} />, open: () => { onOpenTask(task.projectId, task._id); onClose(); } })),
+    ...(issueResults || []).slice(0, 10).map(task => ({ id: `issue-${task._id}`, label: task.title, kind: task.done ? `${taskKey(task._id)} · Completed` : taskKey(task._id), icon: task.done ? <CheckCircle2 size={16} /> : <CircleDot size={16} />, open: () => { onOpenTask(task.projectId, task._id); onClose(); } })),
     ...(memberResults || []).map(member => ({ id: `member-${member._id}`, label: memberName(member), kind: member.username ? `@${member.username}` : "Teammate", icon: <UserAvatar user={member} size="small" />, open: () => { onClose(); openMember(member.email); } })),
     ...messages.map(message => ({ id: `chat-${message.id}`, label: message.body.slice(0, 180), kind: "Chat", icon: <MessageCircle size={16} />, open: () => { onOpenChat(message.id); onClose(); } })),
   ], query);

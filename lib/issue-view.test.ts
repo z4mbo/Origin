@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_VIEW, NO_LABEL, inIssueTab, UNASSIGNED, activeFilterCount, groupIssues, matchesFilters, readIssueView, sortIssues, toggleFilter, type ViewTask } from "./issue-view";
+import { DEFAULT_VIEW, NO_LABEL, inIssueTab, issueTabCounts, newestCompletedFirst, UNASSIGNED, activeFilterCount, groupIssues, matchesFilters, readIssueView, sortIssues, toggleFilter, type ViewTask } from "./issue-view";
 
 const task = (id: string, extra: Partial<ViewTask & { status: string }> = {}): ViewTask & { status: string } => ({ _id: id, title: id, priority: "medium", createdAt: 1, updatedAt: 1, order: 0, status: "todo", ...extra });
 const tasks = [
@@ -69,13 +69,25 @@ describe("view tabs", () => {
   it("Backlog is open issues in the draft column", () => {
     expect([inIssueTab(open, true, "backlog"), inIssueTab(open, false, "backlog"), inIssueTab(done, true, "backlog")]).toEqual([true, false, false]);
   });
-  it("All issues includes completed ones unless Display hides them", () => {
-    expect([inIssueTab(open, true, "all"), inIssueTab(done, false, "all"), inIssueTab(done, false, "all", false)]).toEqual([true, true, false]);
+  it("All issues is every open issue and never a completed one, wherever it sits", () => {
+    expect([inIssueTab(open, true, "all"), inIssueTab(open, false, "all"), inIssueTab(done, false, "all"), inIssueTab(done, true, "all")]).toEqual([true, true, false, false]);
   });
-  it("opens on Active and keeps a stored tab", () => {
+  it("Completed is completed issues only, from any column", () => {
+    expect([inIssueTab(done, false, "completed"), inIssueTab(done, true, "completed"), inIssueTab(open, false, "completed"), inIssueTab(open, true, "completed")]).toEqual([true, true, false, false]);
+  });
+  it("counts open issues on All, Active and Backlog and completed ones only on Completed", () => {
+    const tasks = [{ done: false, draft: true }, { done: false, draft: false }, { done: false, draft: false }, { done: true, draft: false }, { done: true, draft: true }];
+    expect(issueTabCounts(tasks, task => (task as { draft: boolean }).draft)).toEqual({ all: 3, active: 2, backlog: 1, completed: 2 });
+  });
+  it("lists completed issues by completion time, newest first, falling back to updatedAt", () => {
+    const rows = [{ id: "a", done: true, completedAt: 10, updatedAt: 50 }, { id: "b", done: true, updatedAt: 30 }, { id: "c", done: false, updatedAt: 99 }, { id: "d", done: true, completedAt: 40, updatedAt: 41 }];
+    expect(newestCompletedFirst(rows).map(row => row.id)).toEqual(["d", "b", "a"]);
+  });
+  it("opens on Active and keeps a stored tab, Completed included; the old Show completed switch is gone", () => {
     expect(readIssueView(null).tab).toBe("active");
     expect(readIssueView({ tab: "backlog" }).tab).toBe("backlog");
-    expect(readIssueView({ tab: "completed" }).tab).toBe("active");
-    expect(readIssueView({ showCompleted: false }).showCompleted).toBe(false);
+    expect(readIssueView({ tab: "completed" }).tab).toBe("completed");
+    expect(readIssueView({ tab: "archive" }).tab).toBe("active");
+    expect("showCompleted" in readIssueView({ showCompleted: true })).toBe(false);
   });
 });

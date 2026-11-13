@@ -65,7 +65,7 @@ describe("shortcut reference and issue keys", () => {
     expect(issueShortcut(k("b", { ctrlKey: true }), view)).toBe("toggle-layout");
     expect(issueShortcut(k("b", { metaKey: true }), view)).toBe("toggle-layout");
     expect(issueShortcut(k("b", { ctrlKey: true }), { ...view, editing: true })).toBeNull();
-    expect(["1", "2", "3"].map(c => issueShortcut(k(c), view))).toEqual(["tab:all", "tab:active", "tab:backlog"]);
+    expect(["1", "2", "3", "4"].map(c => issueShortcut(k(c), view))).toEqual(["tab:all", "tab:active", "tab:backlog", "tab:completed"]);
   });
 });
 
