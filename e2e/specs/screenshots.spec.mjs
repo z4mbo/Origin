@@ -131,12 +131,12 @@ test('polish screenshots', async ({ clients, f }) => {
   await shot(page, 'list-active.png');
   await page.getByRole('button', { name: 'Board view' }).click();
 
-  // Completed issues (the quiet archive beside the tabs).
-  await page.getByRole('button', { name: 'Completed issues', exact: true }).click();
+  // The Completed view tab.
+  await page.getByRole('tab', { name: 'Completed' }).click();
   await expect(page.locator('.archive-row')).toHaveCount(1);
   await page.mouse.move(1, 1);
   await shot(page, 'completed.png');
-  await page.getByRole('button', { name: 'Completed issues', exact: true }).click();
+  await page.getByRole('tab', { name: 'Active' }).click();
 
   // Command palette and shortcuts.
   await card('Login button misaligned on Safari').focus();

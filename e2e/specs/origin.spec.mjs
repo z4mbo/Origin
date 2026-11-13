@@ -278,17 +278,17 @@ test('O-122 view tabs, Display, filter and layout keys, completed issues', async
   await page.keyboard.press('3');
   await expect(page.getByRole('tab', { name: 'Backlog' })).toHaveAttribute('aria-selected', 'true');
   await expect(titles()).toHaveText(['Parked idea']);
-  // All issues (1): everything, the completed issue after the open ones in its column.
+  // All issues (1): every open issue; completed issues are only in Completed. Tab counts are open issues.
   await page.keyboard.press('1');
-  await expect(titles()).toHaveText(['Parked idea', 'Open work', 'Finished work']);
-  await expect(page.locator('.task-card.done')).toContainText('Finished work');
-  // Shift+V opens Display; hiding completed issues applies to All issues.
+  await expect(titles()).toHaveText(['Parked idea', 'Open work']);
+  await expect(page.locator('.task-card.done')).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'All issues' }).locator('.view-tab-count')).toHaveText('2');
+  await expect(page.getByRole('tab', { name: 'Completed' }).locator('.view-tab-count')).toHaveText('1');
+  // Shift+V opens Display.
   await page.keyboard.press('Shift+V');
   const display = page.getByRole('dialog', { name: 'Display options' });
   await expect(display).toBeVisible();
-  await display.getByRole('switch', { name: 'Show completed issues' }).uncheck();
-  await expect(titles()).toHaveText(['Parked idea', 'Open work']);
-  await display.getByRole('switch', { name: 'Show completed issues' }).check();
+  await expect(display.getByRole('switch', { name: 'Show completed issues' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(display).toHaveCount(0);
   // Ctrl+B toggles list and board.
@@ -301,8 +301,9 @@ test('O-122 view tabs, Display, filter and layout keys, completed issues', async
   await expect(page.getByRole('menu', { name: 'Filter issues' })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Search' })).toHaveCount(0);
   await page.keyboard.press('Escape');
-  // Completed issues sit behind a quiet button beside the tabs, newest first, with Reopen.
-  await page.getByRole('button', { name: 'Completed issues', exact: true }).click();
+  // Completed (4): completed issues, newest first, with who completed them and Reopen.
+  await page.keyboard.press('4');
+  await expect(page.getByRole('tab', { name: 'Completed' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.archive-row')).toHaveCount(1);
   await page.getByRole('button', { name: 'Reopen Finished work' }).click();
   await expect.poll(async () => (await f.member.api.q('tasks:board', f.project)).tasks.find(task => task._id === finished)?.done).toBe(false);

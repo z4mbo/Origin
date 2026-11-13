@@ -5,7 +5,7 @@ import { canEdit, changeOpenIssueCount, getActiveTeamMember, projectMember, proj
 import { priorityValidator, taskAssetTypeValidator } from "./lib/validators";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { recordCompletion } from "./lib/completions";
+import { setIssueCompletion } from "./lib/completions";
 import { notify } from "./notifications";
 import { containsMention, mentionToken } from "../lib/issue-mentions";
 import { updateChecklist } from "../lib/comment-checklist";
@@ -146,13 +146,14 @@ export const inbox = query({
   },
 });
 
+/** Your open issues in a project (completed ones are in the Completed view). */
 export const assignedToMe = query({
   args: { projectId: v.id("projects"), sessionToken: v.string() },
   handler: async (ctx, args) => {
     const { user } = await requireMember(ctx, args.projectId, args.sessionToken);
     const tasks = await ctx.db
       .query("tasks")
-      .withIndex("by_assignee", (q) => q.eq("projectId", args.projectId).eq("assignedToEmail", user.email))
+      .withIndex("by_projectId_and_done_and_assignedToEmail", (q) => q.eq("projectId", args.projectId).eq("done", false).eq("assignedToEmail", user.email))
       .collect();
     return tasks.sort(compareTaskOrder);
   },
@@ -328,6 +329,7 @@ export async function createTaskRecord(ctx: MutationCtx, args: { projectId: Id<"
       assignedToEmail: assignee?.email,
       assignedToName: assignee?.name,
       done,
+      ...(done ? { completedAt: now, completedBy: actorId, completedByName: (await ctx.db.get(actorId))?.name } : {}),
       dueDate,
       ...(labels.length ? { labels } : {}),
       ...(acceptanceCriteria ? { acceptanceCriteria } : {}),
@@ -444,9 +446,6 @@ export async function updateTaskRecord(ctx: MutationCtx, args: { projectId: Id<"
       assignedToName: string | undefined;
       dueDate: string | undefined;
       estimate: number | undefined;
-      done: boolean;
-      completionPullRequest: Doc<"tasks">["completionPullRequest"];
-      githubIssueReopenRequested: boolean | undefined;
       updatedAt: number;
     }> = { updatedAt: Date.now() };
     if (args.title !== undefined) {
@@ -470,22 +469,19 @@ export async function updateTaskRecord(ctx: MutationCtx, args: { projectId: Id<"
       if (args.estimate !== null && !isEstimate(args.estimate)) throw new ConvexError(`Choose an estimate of ${ESTIMATES.join(", ")} points`);
       patch.estimate = args.estimate ?? undefined;
     }
-    if (args.done !== undefined) patch.done = args.done;
-    if (patch.done === false && task.done) {
-      patch.completionPullRequest = undefined;
-      if (task.githubIssueNumber) patch.githubIssueReopenRequested = true;
-    }
-    if (patch.done === true && !task.done) patch.githubIssueReopenRequested = undefined;
-    if (patch.done !== undefined) await recordCompletion(ctx, task, patch.done);
     await ctx.db.patch(args.taskId, patch);
     if (patch.assignedToEmail && patch.assignedToEmail !== task.assignedToEmail) {
       const project = await liveProject(ctx, args.projectId);
       if (project?.teamId) await notify(ctx, { teamId: project.teamId, email: patch.assignedToEmail, actorId, kind: "assignment", eventId: `assigned:${task._id}:${crypto.randomUUID()}`, projectId: project._id, taskId: task._id });
     }
-    if (patch.done !== undefined && patch.done !== task.done) await changeOpenIssueCount(ctx, args.projectId, patch.done ? -1 : 1);
     if (args.description !== undefined) await settleNeedsSpec(ctx, task._id);
-    await issueStatusChanged(ctx, task);
-    await touchProject(ctx, args.projectId);
+    // Completing or reopening goes through setIssueCompletion, which reports the change itself (once).
+    const completion = args.done !== undefined && args.done !== task.done;
+    if (completion) await setIssueCompletion(ctx, (await ctx.db.get(task._id))!, args.done!, { actor: { userId: actorId } });
+    else {
+      await issueStatusChanged(ctx, task);
+      await touchProject(ctx, args.projectId);
+    }
 }
 
 export const moveTask = mutation({
@@ -515,9 +511,11 @@ export async function moveTaskRecord(ctx: MutationCtx, args: { projectId: Id<"pr
     if (plan.noop && !reopen && !reopenAsDraft) return;
     for (const item of plan.renumber) await ctx.db.patch(item._id, { order: item.order });
     const order = plan.order;
+    // A completed issue placed by hand stays where it was put, also when it is reopened later.
     await ctx.db.patch(args.taskId, { columnId: args.columnId, order, updatedAt: Date.now(), ...(reopen ? { githubIssueReopenRequested: true } : {}),
-      ...(reopenAsDraft ? { done: false, completionPullRequest: undefined } : {}) });
-    if (reopenAsDraft) await changeOpenIssueCount(ctx, args.projectId, 1);
+      ...(task.done ? { completedFromColumnId: undefined } : {}) });
+    // A completed issue dropped on Backlog reopens there; the issue.updated below reports both changes at once.
+    if (reopenAsDraft) await setIssueCompletion(ctx, (await ctx.db.get(task._id))!, false, { columnId: args.columnId, quiet: true });
     await settleNeedsSpec(ctx, task._id);
     await issueStatusChanged(ctx, task);
     await touchProject(ctx, args.projectId);

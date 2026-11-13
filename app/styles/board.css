@@ -22,10 +22,11 @@
 .view-tab { display: inline-flex; flex: none; align-items: center; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: var(--radius-full); background: transparent; color: var(--text-3); font-size: var(--text-base); font-weight: var(--weight-medium); white-space: nowrap; transition: background var(--duration-instant) var(--ease-standard), color var(--duration-instant) var(--ease-standard), border-color var(--duration-instant) var(--ease-standard); -webkit-tap-highlight-color: transparent; }
 @media (hover: hover) { .view-tab:hover { background: var(--hover); color: var(--text-1); } }
 .view-tab[aria-selected="true"], .view-tab[aria-selected="true"]:hover { border-color: var(--border-2); background: var(--selected); color: var(--text-1); }
-.view-tab:focus-visible, .view-archive:focus-visible, .icon-segment button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; box-shadow: none; }
+.view-tab:focus-visible, .icon-segment button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; box-shadow: none; }
 .view-tab-short { display: none; }
-.view-archive.icon-button { width: 26px; min-width: 26px; height: 26px; border-radius: var(--radius-full); color: var(--text-3); }
-.view-archive.icon-button.selected { border: 1px solid var(--border-2); background: var(--selected); color: var(--text-1); }
+.view-tab { gap: 6px; }
+.view-tab-count { color: var(--text-3); font-size: var(--text-sm); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+.view-tab-completed > svg { flex: none; color: var(--green); }
 
 /* List / Board: two icons in one hairline box, as Linear's layout switch. */
 .icon-segment { display: inline-flex; flex: none; align-items: center; gap: 1px; height: var(--control-sm); padding: 1px; border: 1px solid var(--border-2); border-radius: var(--radius-sm); background: var(--surface-2); }
@@ -39,7 +40,7 @@
 .archive-caption { display: flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 var(--space-3); color: var(--text-1); font-size: var(--text-base); font-weight: var(--weight-medium); }
 .archive-caption > svg { color: var(--green); }
 .archive-caption > small { color: var(--text-3); font-size: var(--text-sm); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
-.archive-caption > .archive-lane-link { margin-left: auto; }
+.archive-caption > .archive-hint { margin-left: auto; color: var(--text-3); font-size: var(--text-sm); font-weight: var(--weight-regular); }
 .board-filter-control { position: relative; display: flex; min-width: 0; }
 .board-filter-popover { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: flex; align-items: center; gap: var(--space-2); width: 280px; padding: 0 var(--space-1) 0 var(--space-3); border: 1px solid var(--border-2); border-radius: var(--radius-md); background: var(--surface-3); box-shadow: var(--shadow-md); color: var(--text-3); animation: o-pop var(--duration) var(--ease-out); }
 .board-filter-popover input { min-height: 36px; padding: 0; border: 0; background: transparent; box-shadow: none; }
@@ -302,7 +303,9 @@ html.issue-dragging, html.issue-dragging * { cursor: grabbing !important; -webki
 .archive-issue { display: flex; flex: 1; align-items: center; gap: var(--space-3); min-width: 0; }
 .archive-issue > span { flex: none; color: var(--text-3); font-size: var(--text-xs); }
 .archive-issue > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--weight-medium); color: var(--text-2); }
-.archive-row > time { flex: none; color: var(--text-3); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.archive-meta { display: flex; flex: none; align-items: center; gap: var(--space-2); color: var(--text-3); font-size: var(--text-sm); }
+.archive-by { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-meta > time { font-variant-numeric: tabular-nums; }
 .archive-restore { flex: none; }
 
 /* List view: the same issue, Tab stop, menu and quick-edit chips as the cards (components/issue-card.tsx), one row each. */
@@ -352,7 +355,9 @@ button.task-assignee.with-name:hover { box-shadow: none; border-color: var(--bor
   .board-section { --lane-strip: 44px; }
   .board-header { flex-wrap: nowrap; gap: var(--space-1); margin: 0 calc(var(--space-4) * -1) var(--space-2); padding: 0 var(--space-2) 0 var(--space-3); }
   .board-header-actions { gap: 2px; }
-  .board-header-divider, .view-archive.icon-button { display: none; }
+  .board-header-divider { display: none; }
+  .view-tab { gap: 4px; }
+  .view-tab-completed > svg, .view-tab:not(.view-tab-completed) > .view-tab-count { display: none; }
   .view-tab { padding: 0 8px; }
   .view-tab-long { display: none; }
   .view-tab-short { display: inline; }
@@ -420,7 +425,7 @@ button.task-assignee.with-name:hover { box-shadow: none; border-color: var(--bor
   .issue-table .task-chip::before, .issue-table .task-assignee::before { inset: -14px -1px; }
   .archive-list { overflow-x: hidden; }
   .archive-row { gap: var(--space-2); min-height: 48px; padding-right: 0; }
-  .archive-row > time { display: none; }
+  .archive-meta, .archive-caption > .archive-hint { display: none; }
   .archive-restore.ghost-button { width: 44px; min-height: 44px; padding: 0; border-color: transparent; background: transparent; color: var(--text-2); }
   .archive-restore > span { display: none; }
 }

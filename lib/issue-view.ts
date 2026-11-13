@@ -2,6 +2,8 @@
  * The query model the project list and board share: filters, grouping, ordering and which properties rows show.
  * Saved per person and project in this browser.
  */
+import { isDoneColumn, normalizedColumnTitle } from "./origin-columns";
+
 export type Priority = "low" | "medium" | "high";
 export type IssueLayout = "board" | "list";
 export type IssueGrouping = "status" | "priority" | "assignee" | "label" | "none";
@@ -9,10 +11,11 @@ export type IssueOrdering = "manual" | "priority" | "estimate" | "dueDate" | "cr
 export type DisplayProperty = "id" | "status" | "priority" | "assignee" | "labels" | "estimate" | "dueDate" | "pullRequest" | "created";
 export type IssueFilters = { statuses: string[]; priorities: Priority[]; assignees: string[]; labels: string[] };
 /**
- * The project's issue views, as Linear's team pages: All issues, Active and Backlog. Origin keeps its own model:
- * Backlog is the draft column, and completed is a flag on the issue (no Done column).
+ * The project's issue views, as Linear's team pages: All issues, Active, Backlog and Completed. Origin keeps its own
+ * model: Backlog is the draft column, and completed is a flag on the issue (`done`), whatever column it sits in.
+ * Completed issues show only in Completed; the other views are open work.
  */
-export type IssueTab = "all" | "active" | "backlog";
+export type IssueTab = "all" | "active" | "backlog" | "completed";
 export type IssueViewState = {
   version?: number;
   tab: IssueTab;
@@ -21,8 +24,6 @@ export type IssueViewState = {
   ordering: IssueOrdering;
   showEmptyGroups: boolean;
   showSubIssues: boolean;
-  /** All issues only: completed issues stay in their column, after the open ones. */
-  showCompleted: boolean;
   properties: DisplayProperty[];
   filters: IssueFilters;
 };
@@ -32,17 +33,48 @@ export type ViewTask = { _id: string; title: string; priority: Priority; assigne
 /** The view tabs in order, with their single-key shortcut. */
 export const ISSUE_TABS: { value: IssueTab; label: string; key: string }[] = [
   { value: "all", label: "All issues", key: "1" }, { value: "active", label: "Active", key: "2" }, { value: "backlog", label: "Backlog", key: "3" },
+  { value: "completed", label: "Completed", key: "4" },
 ];
 
 /**
  * Whether an issue belongs to a view tab. `draft` is whether its column is the draft (Backlog) column.
- * All issues: everything, completed included unless Display hides them. Active: open issues outside the Backlog.
- * Backlog: open issues in the Backlog column.
+ * All issues: every open issue. Active: open issues outside the Backlog. Backlog: open issues in the Backlog column.
+ * Completed: completed issues only, whatever column they are in (a Done column, a workflow column or Backlog).
  */
-export function inIssueTab(task: { done?: boolean }, draft: boolean, tab: IssueTab, showCompleted = true): boolean {
-  if (tab === "all") return !task.done || showCompleted;
+export function inIssueTab(task: { done?: boolean }, draft: boolean, tab: IssueTab): boolean {
+  if (tab === "completed") return Boolean(task.done);
   if (task.done) return false;
-  return tab === "backlog" ? draft : !draft;
+  return tab === "all" || (tab === "backlog" ? draft : !draft);
+}
+
+type LaneColumn = { _id: string; title: string; isDone?: boolean; isDraft?: boolean };
+type LaneTask = { _id: string; columnId: string; done: boolean };
+
+/**
+ * Where open issues show on the board: their own column, or Todo (else the first lane) when their column is hidden
+ * (a Done column or a deleted one). Completed issues have no lane, whatever column they sit in.
+ */
+export function boardLanes<C extends LaneColumn>(columns: readonly C[]) {
+  const visible = columns.filter(column => !isDoneColumn(column));
+  const ids = new Set(visible.map(column => column._id));
+  const fallback = visible.find(column => normalizedColumnTitle(column.title) === "todo") ?? visible[0];
+  const laneOf = (task: Pick<LaneTask, "columnId">) => ids.has(task.columnId) ? task.columnId : fallback?._id;
+  /** Open issues of one lane, in the given order. */
+  const tasksIn = <T extends LaneTask>(tasks: readonly T[], columnId: string, matches: (task: T) => boolean = () => true) =>
+    tasks.filter(task => !task.done && laneOf(task) === columnId && matches(task));
+  return { visible, laneOf, tasksIn };
+}
+
+/** How many issues each view tab holds. Only Completed counts completed issues. */
+export function issueTabCounts(tasks: readonly { done?: boolean }[], isDraft: (task: { done?: boolean }) => boolean): Record<IssueTab, number> {
+  const counts: Record<IssueTab, number> = { all: 0, active: 0, backlog: 0, completed: 0 };
+  for (const task of tasks) for (const { value } of ISSUE_TABS) if (inIssueTab(task, !task.done && isDraft(task), value)) counts[value] += 1;
+  return counts;
+}
+
+/** Completed issues, the most recently completed first (issues completed before completedAt existed use updatedAt). */
+export function newestCompletedFirst<T extends { done?: boolean; completedAt?: number; updatedAt: number }>(tasks: readonly T[]): T[] {
+  return tasks.filter(task => task.done).sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt));
 }
 
 export const GROUPINGS: { value: IssueGrouping; label: string }[] = [
@@ -65,7 +97,7 @@ export const NO_LABEL = "";
 export const DEFAULT_VIEW: IssueViewState = {
   version: 2,
   tab: "active",
-  layout: "board", grouping: "status", ordering: "manual", showEmptyGroups: false, showSubIssues: true, showCompleted: true,
+  layout: "board", grouping: "status", ordering: "manual", showEmptyGroups: false, showSubIssues: true,
   properties: ["id", "status", "priority", "assignee", "estimate", "dueDate", "labels", "pullRequest"],
   filters: { statuses: [], priorities: [], assignees: [], labels: [] },
 };
@@ -89,7 +121,6 @@ export function readIssueView(raw: unknown, legacyLayout?: string | null): Issue
     ordering: pick(value.ordering, ORDERINGS, DEFAULT_VIEW.ordering),
     showEmptyGroups: typeof value.showEmptyGroups === "boolean" ? value.showEmptyGroups : DEFAULT_VIEW.showEmptyGroups,
     showSubIssues: typeof value.showSubIssues === "boolean" ? value.showSubIssues : DEFAULT_VIEW.showSubIssues,
-    showCompleted: typeof value.showCompleted === "boolean" ? value.showCompleted : DEFAULT_VIEW.showCompleted,
     properties: Array.isArray(value.properties) ? properties : DEFAULT_VIEW.properties,
     filters: {
       statuses: strings(filters.statuses),

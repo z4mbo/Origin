@@ -114,8 +114,8 @@ export function FilterChips({ filters, sources, onChange, onAdd }: { filters: Is
 }
 
 /**
- * Display options, after Linear's: List / Board tiles, grouping and ordering, then what shows (completed issues in All
- * issues, sub-issues, empty groups) and which properties rows and cards carry. Shift+V opens it.
+ * Display options, after Linear's: List / Board tiles, grouping and ordering, then what shows (sub-issues, empty
+ * groups) and which properties rows and cards carry. Completed issues have their own view tab. Shift+V opens it.
  */
 export function DisplayOptions({ view, onChange, archive, opener }: { view: IssueViewState; onChange: (view: IssueViewState) => void; archive: boolean; opener?: Ref<PopoverOpener> }) {
   const { open, setOpen, close, trigger, menu, focus } = usePopover(320);
@@ -136,7 +136,6 @@ export function DisplayOptions({ view, onChange, archive, opener }: { view: Issu
         <div className="display-row"><span className="display-label"><ArrowUpDown size={14} />Ordering</span><IssueSelect label="Ordering" caption="Ordering" value={view.ordering} onChange={value => set({ ordering: value as IssueViewState["ordering"] })} options={ORDERINGS.map(option => ({ value: option.value, label: option.label }))} /></div>
       </div>
       <div className="display-section">
-        {view.tab === "all" && <Switch label="Show completed issues" checked={view.showCompleted} onChange={showCompleted => set({ showCompleted })} />}
         <Switch label="Show sub-issues" checked={view.showSubIssues} onChange={showSubIssues => set({ showSubIssues })} />
         <Switch label={board ? "Show empty columns" : "Show empty groups"} checked={view.showEmptyGroups} onChange={showEmptyGroups => set({ showEmptyGroups })} />
       </div>

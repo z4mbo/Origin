@@ -4,11 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { liveProject } from "./permissions";
 
-export { compareWorkflowColumns, DEFAULT_WORKFLOW_COLUMNS, isDraftColumn, normalizedColumnTitle as normalizeColumnTitle } from "../../lib/origin-columns";
-
-export function isDoneColumn(column: { title: string; isDone?: boolean; isDraft?: boolean }) {
-  return !isDraftColumn(column) && (column.isDone ?? normalizedColumnTitle(column.title) === "done");
-}
+export { compareWorkflowColumns, DEFAULT_WORKFLOW_COLUMNS, isDoneColumn, isDraftColumn, normalizedColumnTitle as normalizeColumnTitle } from "../../lib/origin-columns";
 
 export async function projectDraftStatus(ctx: QueryCtx, projectId: Id<"projects">): Promise<"present" | "absent" | "unresolved"> {
   const flagged = await ctx.db.query("columns").withIndex("by_projectId_and_isDraft_and_order", q => q.eq("projectId", projectId).eq("isDraft", true)).first();

@@ -3,7 +3,7 @@ import { action, internalMutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { canEdit, changeOpenIssueCount, requireMember, touchProject, liveProject } from "./lib/permissions";
 import { DEFAULT_OWNER_EMAIL } from "./lib/auth";
-import { recordCompletion } from "./lib/completions";
+import { setIssueCompletion } from "./lib/completions";
 import { isDraftColumn } from "./lib/columns";
 import { issueCreated, issueStatusChanged } from "./lib/issueEvents";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -316,10 +316,9 @@ export const upsertRepoSnapshot = internalMutation({
           if (existing.githubTaskMode === "pull_request" || await ctx.db.query("taskPullRequests").withIndex("by_taskId", q => q.eq("taskId", existing._id)).first()) patch.done = existing.done;
           if (issue.state === "open" && existing.githubIssueState !== "closed") patch.done = existing.done;
           patch.columnId = existing.columnId;
-          await recordCompletion(ctx, existing, patch.done, issue.updatedAt);
-          await ctx.db.patch(existing._id, { ...patch, ...(issue.state === "open" ? { githubIssueReopenRequested: undefined,
+          await ctx.db.patch(existing._id, { ...patch, done: existing.done, ...(issue.state === "open" ? { githubIssueReopenRequested: undefined,
             ...(existing.githubIssueState === "closed" ? { completionPullRequest: undefined } : {}) } : {}) });
-          if (existing.done !== patch.done) await changeOpenIssueCount(ctx, args.projectId, patch.done ? -1 : 1);
+          if (existing.done !== patch.done) await setIssueCompletion(ctx, (await ctx.db.get(existing._id))!, patch.done, { actor: { name: "GitHub" }, completedAt: issue.updatedAt, fromGitHub: true, quiet: true });
           await issueStatusChanged(ctx, existing);
         } else {
           const taskId = await ctx.db.insert("tasks", {

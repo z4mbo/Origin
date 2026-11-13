@@ -14,7 +14,7 @@ export type IssueShortcut = "create" | "search" | "filter" | "display" | "board"
 
 /**
  * Keys of the project issues view, as in Linear: C create, / search, F filter, Shift+V display options, Mod+B
- * toggles list and board (B and L pick one), 1 / 2 / 3 open All issues, Active and Backlog. With an issue in focus,
+ * toggles list and board (B and L pick one), 1 / 2 / 3 / 4 open All issues, Active, Backlog and Completed. With an issue in focus,
  * L belongs to labels (the workspace handles it).
  */
 export function issueShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "defaultPrevented" | "repeat" | "isComposing">, context: { editing: boolean; overlayOpen: boolean; canEdit: boolean; issueFocused?: boolean }): IssueShortcut | null {
@@ -31,6 +31,7 @@ export function issueShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "me
     case "1": return "tab:all";
     case "2": return "tab:active";
     case "3": return "tab:backlog";
+    case "4": return "tab:completed";
     default: return null;
   }
 }

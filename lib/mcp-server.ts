@@ -102,7 +102,7 @@ export function originMcpServer(token: string, write: boolean) {
     inputSchema: z.object({
       issueId: ref("Issue id or key"), column: ref("Target column name or id").optional(),
       before: ref("Place above this issue id (same column)").optional(), position: z.enum(["top", "bottom"]).optional().describe("Default: bottom"),
-      completed: z.boolean().optional().describe("true completes, false reopens"),
+      completed: z.boolean().optional().describe("true completes (only finished, verified work), false reopens into the previous column"),
     }), annotations: { ...change, idempotentHint: true },
   }, a => run(() => convex.mutation(api.mcp.moveIssue, { token, ...a })));
   server.registerTool("add_comment", {

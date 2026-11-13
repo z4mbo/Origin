@@ -12,6 +12,14 @@ export function isDraftColumn(column: { title?: unknown; isDraft?: unknown }): b
   return typeof column.isDraft === "boolean" ? column.isDraft : normalizedColumnTitle(column.title) === "draft";
 }
 
+/**
+ * A Done column (flagged `isDone`, or a legacy column titled "Done"). Done columns are hidden: completion is the
+ * issue's own `done` flag, and completed issues show only in the Completed view. The draft column is never one.
+ */
+export function isDoneColumn(column: { title?: unknown; isDone?: unknown; isDraft?: unknown }): boolean {
+  return !isDraftColumn(column) && (typeof column.isDone === "boolean" ? column.isDone : normalizedColumnTitle(column.title) === "done");
+}
+
 /** The first column of boards created before drafts, which becomes the draft column. */
 export const isLegacyIdeaColumn = (column: { title?: unknown; isDraft?: unknown }): boolean =>
   column.isDraft === undefined && normalizedColumnTitle(column.title) === "idea";

@@ -20,6 +20,7 @@ import { taskBranch } from "../lib/task-branch";
 import { cleanLabels, projectLabels } from "./lib/labels";
 import { addCriteria } from "../lib/acceptance-criteria";
 import { activityRows, projectAgents, recordActivity, setDelegate } from "./issueActivity";
+import { setIssueCompletion } from "./lib/completions";
 
 // Tools for the remote MCP server (app/api/mcp). Every call carries a connector token (OAuth grant or personal
 // access token, both stored as connectorGrants) and runs with the token owner's workspace and project permissions.
@@ -105,6 +106,7 @@ function issueSummary(slug: string, project: Doc<"projects">, task: Doc<"tasks">
   return {
     id: task._id, key: issueKey(task._id), title: task.title, project: project.name, projectId: project._id,
     column: column?.title ?? null, status: task.done ? "completed" : "open", priority: task.priority,
+    ...(task.done ? { completedAt: new Date(task.completedAt ?? task.updatedAt).toISOString(), ...(task.completedByName ? { completedBy: task.completedByName } : {}) } : {}),
     assignee: task.assignedToEmail ? { name: task.assignedToName || task.assignedToEmail, email: task.assignedToEmail } : null,
     ...(task.delegateGrantId ? { delegate: { id: task.delegateGrantId, name: task.delegateName ?? "Agent" } } : {}),
     dueDate: task.dueDate ?? null, ...(task.labels?.length ? { labels: task.labels } : {}),
@@ -202,7 +204,7 @@ export const issues = query({
         return true;
       });
       const open = tasks.filter(t => !t.done).sort((x, y) => rank.get(columnFor(x)!)! - rank.get(columnFor(y)!)! || compareTaskOrder(x, y));
-      const completed = tasks.filter(t => t.done).sort((x, y) => y.updatedAt - x.updatedAt);
+      const completed = tasks.filter(t => t.done).sort((x, y) => (y.completedAt ?? y.updatedAt) - (x.completedAt ?? x.updatedAt));
       for (const task of [...open, ...completed]) {
         if (matched++ < skip) continue;
         if (results.length === limit) { matched = -1; break outer; }
@@ -357,7 +359,9 @@ export const moveIssue = mutation({
     }
     const current = (await ctx.db.get(task._id))!;
     const done = a.completed ?? (a.column ? false : current.done);
-    if (done !== current.done) await updateTaskRecord(ctx, { projectId: project._id, taskId: task._id, done }, access.user._id);
+    // The same completion path as the board: issue.updated once, the GitHub mirror closes or reopens, nobody is
+    // assigned or delegated. A reopened issue goes back to a visible column.
+    if (done !== current.done) await setIssueCompletion(ctx, current, done, { actor: { userId: access.user._id, name: `${access.user.name} via ${access.grant.name}` } });
     const after = (await ctx.db.get(task._id))!;
     if (task.delegateGrantId === access.grant._id && (after.columnId !== task.columnId || after.done !== task.done)) {
       const title = async (id: Id<"columns">) => (await ctx.db.get(id))?.title;

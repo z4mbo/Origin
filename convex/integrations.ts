@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { canEdit, getActiveTeamMember, requireMember, requireTeamAdmin, requireTeamMember, changeOpenIssueCount, touchProject, liveProject, isDeleting } from "./lib/permissions";
-import { hasCurrentMergeReceipt, recordCompletion } from "./lib/completions";
+import { canEdit, getActiveTeamMember, requireMember, requireTeamAdmin, requireTeamMember, touchProject, liveProject, isDeleting } from "./lib/permissions";
+import { hasCurrentMergeReceipt, setIssueCompletion } from "./lib/completions";
 import { DEFAULT_OWNER_EMAIL } from "./lib/auth";
 import { isDraftColumn, projectDraftStatus } from "./lib/columns";
 import { isLegacyIdeaColumn } from "../lib/origin-columns";
@@ -25,13 +25,7 @@ async function inDraft(ctx: QueryCtx, task: Doc<"tasks">) {
 async function completeWithMergeReceipt(ctx: MutationCtx, project: Doc<"projects">, task: Doc<"tasks">) {
   if (project.status !== "active" || !project.githubWorkspaceAccess || task.githubIssueState !== "closed"
     || !hasCurrentMergeReceipt(task, project) || await inDraft(ctx, task)) return false;
-  if (!task.done) {
-    await recordCompletion(ctx, task, true, task.completionPullRequest!.mergedAt);
-    await changeOpenIssueCount(ctx, project._id, -1);
-    await ctx.db.patch(task._id, { done: true, updatedAt: Date.now() });
-    await issueStatusChanged(ctx, task);
-    await touchProject(ctx, project._id);
-  }
+  if (!task.done) await setIssueCompletion(ctx, task, true, { actor: { name: "GitHub" }, completedAt: task.completionPullRequest!.mergedAt, fromGitHub: true });
   return true;
 }
 
@@ -129,13 +123,10 @@ export const linkIssue = internalMutation({
       await completeWithMergeReceipt(ctx, project, task);
       return null;
     }
-    if (reopenedOnGitHub) await changeOpenIssueCount(ctx, project._id, 1);
-    if (closedOnGitHub) {
-      await recordCompletion(ctx, task, true, a.updatedAt);
-      await changeOpenIssueCount(ctx, project._id, -1);
-    }
     const reopened = a.state === "open" && task.githubIssueState === "closed";
-    await ctx.db.patch(task._id, { teamId: project.teamId, githubIssueNumber: a.number, githubIssueUrl: a.issueUrl, githubIssueState: a.state, githubIssueUpdatedAt: a.updatedAt, githubIssueSyncedAt: Date.now(), ...(a.state === "open" ? { githubIssueReopenRequested: undefined } : {}), ...(reopened ? { completionPullRequest: undefined } : {}), ...(changed ? { done: closedOnGitHub, updatedAt: Date.now() } : {}) });
+    await ctx.db.patch(task._id, { teamId: project.teamId, githubIssueNumber: a.number, githubIssueUrl: a.issueUrl, githubIssueState: a.state, githubIssueUpdatedAt: a.updatedAt, githubIssueSyncedAt: Date.now(), ...(a.state === "open" ? { githubIssueReopenRequested: undefined } : {}), ...(reopened ? { completionPullRequest: undefined } : {}) });
+    // Closed or reopened on GitHub: the same completion path as the board, without asking GitHub to reopen again.
+    if (changed) await setIssueCompletion(ctx, (await ctx.db.get(task._id))!, closedOnGitHub, { actor: { name: "GitHub" }, completedAt: a.updatedAt, fromGitHub: true, quiet: true });
     if (changed) await issueStatusChanged(ctx, task);
     await completeWithMergeReceipt(ctx, project, (await ctx.db.get(task._id))!);
     if (changed || !task.githubIssueNumber) await touchProject(ctx, project._id); return null;
