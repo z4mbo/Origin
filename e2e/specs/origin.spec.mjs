@@ -144,10 +144,9 @@ test('O-063 O-064 chat and private DMs synchronize without leaking to a third cl
   expect(unauthorized.ok()).toBe(false);
 });
 
-test('O-101 O-102 O-104 vault encrypts in browser, reloads, rejects wrong key and locks', async ({ clients, f }) => {
+test('O-101 O-102 O-104 vault opens without a password, seals values on the server and reveals after reload', async ({ clients, f }) => {
   const page = await clients.login(f.member, f.url('tab=vault'));
-  await page.getByLabel('Passphrase', { exact: true }).fill('fixture-passphrase-123');
-  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.getByLabel('Passphrase', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'New item', exact: true }).first().click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: 'Secret', exact: true }).click();
@@ -159,15 +158,11 @@ test('O-101 O-102 O-104 vault encrypts in browser, reloads, rejects wrong key an
   expect(JSON.stringify(stored)).not.toContain('e2e-secret-value');
   await page.getByRole('button', { name: 'Reveal Fixture secret', exact: true }).click();
   await expect(page.getByText('e2e-secret-value', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+  await page.getByRole('button', { name: 'Hide Fixture secret', exact: true }).click();
   await expect(page.getByText('e2e-secret-value', { exact: true })).toHaveCount(0);
   await page.reload();
-  await page.getByLabel('Passphrase', { exact: true }).fill('wrong-passphrase');
-  await page.getByRole('button', { name: /^Unlock/ }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await page.getByLabel('Passphrase', { exact: true }).fill('fixture-passphrase-123');
-  await page.getByRole('button', { name: /^Unlock/ }).click();
-  await expect(page.getByText('Fixture secret', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Reveal Fixture secret', exact: true }).click();
+  await expect(page.getByText('e2e-secret-value', { exact: true })).toBeVisible();
 });
 
 test('O-106 O-107 O-108 feedback public submission appears to two clients', async ({ page, clients, f }) => {

@@ -116,7 +116,7 @@ Apps registered before the `push` event was added: open the App's settings on Gi
 
 Repository creation uses the connected administrator's personal account and creates private repositories. For an existing repository, an admin must approve workspace access. A fine-grained project token is an optional alternative; never ask ordinary members for a server-wide token.
 
-Stored credentials are sealed in Convex with `ORIGIN_SEALING_KEY` (AES-256-GCM, bound to the row they belong to); MCP OAuth codes and tokens are kept only as SHA-256 hashes. The frontend never holds the key. Revoke credentials through the source service if the Convex deployment or its environment is compromised.
+Stored credentials are sealed in Convex with `ORIGIN_SEALING_KEY` (AES-256-GCM, bound to the row they belong to); MCP OAuth codes and tokens are kept only as SHA-256 hashes. The frontend never holds the key. Vault values are sealed the same way (bound to their project, or to their owner for personal items): the Vault asks for no password, and anyone with access to a project can reveal its items. Revoke credentials through the source service if the Convex deployment or its environment is compromised.
 
 ## 4. Configure Email and Calls
 

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { createSession } from "./lib/auth";
@@ -9,7 +9,9 @@ import type { Id, TableNames } from "./_generated/dataModel";
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 const CHAT_MESSAGES = 700;
 
-afterEach(() => { vi.useRealTimers(); });
+const SEALING_KEY = btoa(String.fromCharCode(...new Array(32).fill(7)));
+beforeEach(() => { vi.stubEnv("ORIGIN_SEALING_KEY", SEALING_KEY); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 async function seedWorkspace(t: ReturnType<typeof convexTest>, sessionToken: string, ownerId: Id<"users">, name: string) {
   const { teamId } = await t.mutation(api.workspaces.create, { sessionToken, name });
@@ -21,7 +23,7 @@ async function seedWorkspace(t: ReturnType<typeof convexTest>, sessionToken: str
     const taskId = await t.mutation(api.tasks.createTask, { ...scope, columnId, title: "Ship it", priority: "high", assignedToEmail: "owner@delete.test", dueDate: "2026-12-31" });
     const otherTaskId = await t.mutation(api.tasks.createTask, { ...scope, columnId, title: "Then this", priority: "low", assignedToEmail: "owner@delete.test", dueDate: "2026-12-31" });
     await t.mutation(api.tasks.addComment, { ...scope, taskId, body: "On it" });
-    await t.mutation(api.credentials.create, { ...scope, title: "Vault entry", ciphertext: "c", iv: "i", salt: "s", iterations: 600000, kdf: "PBKDF2" });
+    await t.mutation(api.credentials.create, { ...scope, title: "Vault entry", secret: "s" });
     await t.mutation(api.wiki.create, { ...scope, title: "Notes", content: "Body", type: "wiki", tags: [] });
     await t.mutation(api.design.createToken, { ...scope, type: "color", name: "Accent", value: "#123456" });
     await t.mutation(api.feedback.configure, { ...scope, teamId, title: "Feedback", description: "", enabled: true });

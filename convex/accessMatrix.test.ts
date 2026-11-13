@@ -1,12 +1,16 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { createSession } from "./lib/auth";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 const paginationOpts = { numItems: 20, cursor: null };
+const SEALING_KEY = btoa(String.fromCharCode(...new Array(32).fill(7)));
+
+beforeEach(() => { vi.stubEnv("ORIGIN_SEALING_KEY", SEALING_KEY); });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -31,7 +35,7 @@ async function fixture() {
     const scope = { sessionToken, projectId };
     const columnId = (await t.query(api.tasks.board, scope)).columns[1]!._id;
     const taskId = await t.mutation(api.tasks.createTask, { ...scope, columnId, title: "Sensitive issue", priority: "medium", assignedToEmail: people.owner.email, dueDate: "2026-12-31" });
-    const credentialId = await t.mutation(api.credentials.create, { ...scope, title: "Encrypted vault entry", ciphertext: "ciphertext", iv: "iv", salt: "salt", iterations: 600000, kdf: "PBKDF2" });
+    const credentialId = await t.mutation(api.credentials.create, { ...scope, title: "Vault entry", secret: "Confidential secret" });
     const pageId = await t.mutation(api.wiki.create, { ...scope, title: "Sensitive document", content: "Confidential", type: "wiki", tags: [] });
     await t.mutation(api.design.createToken, { ...scope, type: "color", name: "Accent", value: "#123456" });
     await t.mutation(api.design.createAsset, { ...scope, type: "image", name: "Asset", url: "https://example.test/image.png" });
@@ -87,7 +91,7 @@ describe("backend resource access matrix", () => {
       ["tasks.moveTask", () => f.t.mutation(api.tasks.moveTask, { ...scope, taskId: f.shared.taskId, columnId: f.private.columnId })],
       ["tasks.addComment", () => f.t.mutation(api.tasks.addComment, { ...scope, taskId: f.private.taskId, body: "Hijacked" })],
       ["tasks.deleteTask", () => f.t.mutation(api.tasks.deleteTask, { ...scope, taskId: f.private.taskId })],
-      ["credentials.update", () => f.t.mutation(api.credentials.update, { ...scope, credentialId: f.private.credentialId, ciphertext: "Hijacked" })],
+      ["credentials.update", () => f.t.mutation(api.credentials.update, { ...scope, credentialId: f.private.credentialId, secret: "Hijacked" })],
       ["credentials.remove", () => f.t.mutation(api.credentials.remove, { ...scope, credentialId: f.private.credentialId })],
       ["design.updateToken", () => f.t.mutation(api.design.updateToken, { ...scope, tokenId: f.private.tokenId, value: "Hijacked" })],
       ["design.removeToken", () => f.t.mutation(api.design.removeToken, { ...scope, tokenId: f.private.tokenId })],
@@ -104,7 +108,7 @@ describe("backend resource access matrix", () => {
     ];
     for (const [name, call] of calls) await expect(call(), name).rejects.toThrow();
     expect(await f.t.query(api.tasks.details, { sessionToken: f.owner.token, projectId: f.private.projectId, taskId: f.private.taskId })).toEqual(before);
-    expect((await f.t.query(api.credentials.list, { sessionToken: f.owner.token, projectId: f.private.projectId }))[0]?.ciphertext).toBe("ciphertext");
+    expect(await f.t.mutation(api.credentials.reveal, { sessionToken: f.owner.token, projectId: f.private.projectId, credentialId: f.private.credentialId })).toBe("Confidential secret");
     expect((await f.t.query(api.wiki.list, { sessionToken: f.owner.token, projectId: f.private.projectId }))[0]?.content).toBe("Confidential");
   });
 
@@ -115,7 +119,7 @@ describe("backend resource access matrix", () => {
     expect((await f.t.query(api.projects.get, scope)).memberRole).toBe("viewer");
     const calls: Array<[string, () => Promise<unknown>]> = [
       ["tasks.updateTask", () => f.t.mutation(api.tasks.updateTask, { ...scope, taskId: f.shared.taskId, title: "Hijacked" })],
-      ["credentials.update", () => f.t.mutation(api.credentials.update, { ...scope, credentialId: f.shared.credentialId, ciphertext: "Hijacked" })],
+      ["credentials.update", () => f.t.mutation(api.credentials.update, { ...scope, credentialId: f.shared.credentialId, secret: "Hijacked" })],
       ["design.updateToken", () => f.t.mutation(api.design.updateToken, { ...scope, tokenId: f.shared.tokenId, value: "Hijacked" })],
       ["wiki.update", () => f.t.mutation(api.wiki.update, { ...scope, pageId: f.shared.pageId, content: "Hijacked" })],
       ["documents.rename", () => f.t.mutation(api.documents.rename, { sessionToken, pageId: f.shared.pageId, title: "Hijacked" })],

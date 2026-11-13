@@ -6,10 +6,11 @@ import { formatDate } from "@/lib/format";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import clsx from "clsx";
-import { Check, Copy, Eye, EyeOff, File, FileText, ImageIcon, KeyRound, KeySquare, LayoutGrid, Link2, List, Loader2, LockKeyhole, PenTool, Plus, Search, Shapes, Shuffle, Smartphone, SquareAsterisk, StickyNote, Trash2, Type, Upload, X, type LucideIcon } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, File, FileText, ImageIcon, KeyRound, KeySquare, LayoutGrid, Link2, List, Loader2, Pencil, PenTool, Plus, Search, Shapes, Shuffle, Smartphone, SquareAsterisk, StickyNote, Trash2, Type, Upload, X, type LucideIcon } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import { decryptSecret, encryptSecret } from "@/lib/vaultCrypto";
+import { decryptSecret, type EncryptedSecret } from "@/lib/vaultCrypto";
+import type { FunctionReturnType } from "convex/server";
 import { Dialog } from "./dialog";
 import { RECONNECT_TO_CREATE, useWorkspaceOnline } from "./workspace-connection";
 import { useFileDrop } from "./use-file-drop";
@@ -34,158 +35,178 @@ import { ProjectEmpty } from "./project-empty";
 const kinds = { password: "Login", api_key: "API key", secret: "Secret", note: "Secure note" };
 const kindIcons: Record<string, LucideIcon> = { password: KeyRound, api_key: KeySquare, secret: SquareAsterisk, note: StickyNote };
 type Kind = keyof typeof kinds;
+type VaultItem = FunctionReturnType<typeof api.credentials.list>[number];
 
 function hostOf(url?: string) {
   if (!url) return "";
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
 
-/** The vault's oldest item; its passphrase is the vault's passphrase. */
-function vaultAnchor(items: Doc<"credentials">[]) {
-  return items.reduce<Doc<"credentials"> | null>((oldest, item) => !oldest || item._creationTime < oldest._creationTime ? item : oldest, null);
-}
-
+/**
+ * The project's Vault. Values are sealed by the server, so it opens directly: members reveal and copy, editors add,
+ * edit and delete. Items from before (encrypted with the old Vault password) are listed with a "Needs conversion"
+ * marker until someone converts them once with that password (VaultConversion).
+ */
 export function VaultPanel({ projectId, sessionToken, canEdit }: Props & { canEdit: boolean }) {
   const online = useWorkspaceOnline();
   const items = useQuery(api.credentials.list, { projectId, sessionToken });
   const remove = useMutation(api.credentials.remove);
-  const [passphrase, setPassphrase] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
-  // The vault's first item is its passphrase check: every passphrase must open it before it unlocks or adds items.
-  const [verifiedId, setVerifiedId] = useState<Id<"credentials"> | null>(null);
+  const revealValue = useMutation(api.credentials.reveal);
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<VaultItem | "new" | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [deleting, setDeleting] = useState<Doc<"credentials"> | null>(null);
-  const epoch = useRef(0);
+  const [deleting, setDeleting] = useState<VaultItem | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
-  const lock = () => { epoch.current++; setPassphrase(""); setRevealed({}); setUnlocked(false); setVerifiedId(null); setOpen(false); setDeleting(null); setNotice(""); };
-  useEffect(() => {
-    if (!unlocked) return;
-    let timer: ReturnType<typeof setTimeout>;
-    const reset = () => { clearTimeout(timer); timer = setTimeout(lock, 5 * 60000); };
-    const hide = () => { if (document.hidden) lock(); };
-    reset(); window.addEventListener("pointerdown", reset); window.addEventListener("keydown", reset); document.addEventListener("visibilitychange", hide);
-    return () => { clearTimeout(timer); epoch.current++; window.removeEventListener("pointerdown", reset); window.removeEventListener("keydown", reset); document.removeEventListener("visibilitychange", hide); };
-  }, [unlocked]);
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
-  const unlock = async (e: FormEvent) => {
-    e.preventDefault(); setBusy(true); setNotice("");
-    try {
-      const anchor = items ? vaultAnchor(items) : null;
-      if (anchor) await decryptSecret(anchor, passphrase);
-      else if (passphrase.length < 10) { setNotice("Use at least 10 characters"); return; }
-      setVerifiedId(anchor?._id ?? null);
-      setUnlocked(true);
-    } catch { setNotice("Wrong passphrase"); }
-    finally { setBusy(false); }
-  };
-  const reveal = async (item: Doc<"credentials">, copy = false) => {
-    const started = epoch.current;
+  // A changed item shows its new value on the next reveal, not a stale one.
+  const hide = (id: string) => setRevealed(current => { const next = { ...current }; delete next[id]; return next; });
+  const reveal = async (item: VaultItem, copy = false) => {
     setNotice("");
     try {
-      if (!copy && revealed[item._id]) { setRevealed(current => { const next = { ...current }; delete next[item._id]; return next; }); return; }
-      const value = revealed[item._id] ?? await decryptSecret(item, passphrase);
-      if (started !== epoch.current) return;
+      if (!copy && revealed[item._id] !== undefined) { hide(item._id); return; }
+      const value = revealed[item._id] ?? await revealValue({ projectId, sessionToken, credentialId: item._id });
       if (copy) {
         await navigator.clipboard.writeText(value);
         setCopied(item._id);
         window.clearTimeout(copyTimer.current);
         copyTimer.current = window.setTimeout(() => setCopied(null), 1600);
       } else setRevealed(current => ({ ...current, [item._id]: value }));
-    } catch (error) { setNotice(copy && error instanceof DOMException && error.name === "NotAllowedError" ? "Copy was blocked by the browser" : "This item uses a different passphrase"); }
+    } catch (error) { setNotice(copy && error instanceof DOMException && error.name === "NotAllowedError" ? "Copy was blocked by the browser" : errorText(error, "Could not open this item")); }
   };
 
   if (items === undefined) return <DelayedSkeleton label="Loading vault" />;
-  if (!items.length && !canEdit) return <section className="project-library" aria-label="Vault"><ProjectEmpty icon={KeyRound} title="No secrets" /></section>;
-  if (!unlocked) return <section className="vault-locked" aria-label="Vault">
-    <span className="project-empty-icon"><LockKeyhole size={20} /></span>
-    <h2>{items.length ? "Vault locked" : "Create a vault"}</h2>
-    {items.length > 0 && <span className="vault-locked-count">{items.length} {items.length === 1 ? "item" : "items"}</span>}
-    <form className="vault-unlock" onSubmit={unlock}>
-      <input type="password" aria-label="Passphrase" placeholder="Passphrase" autoComplete="off" value={passphrase} onChange={e => { setPassphrase(e.target.value); setNotice(""); }} required minLength={items.length ? 1 : 10} aria-invalid={Boolean(notice) || undefined} aria-describedby={notice ? "vault-unlock-error" : undefined} />
-      <button className="primary-button" title={!online && !items.length ? RECONNECT_TO_CREATE : undefined} disabled={busy || !passphrase || (!online && !items.length)}>{busy && <Loader2 className="spin" size={15} />}{items.length ? "Unlock" : "Create"}</button>
-    </form>
-    {notice && <p id="vault-unlock-error" role="alert" className="field-error">{notice}</p>}
-  </section>;
-
   const filtered = items.filter(item => `${item.title} ${item.username || ""} ${item.url || ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const legacyCount = items.filter(item => item.needsConversion).length;
   return <section className="project-library" aria-label="Vault">
     <div className="library-toolbar">
       {items.length > 0 ? <LibrarySearch label="Search vault" value={query} onChange={setQuery} /> : <span className="library-toolbar-spacer" />}
-      <button className="ghost-button compact" onClick={lock} aria-label="Lock vault"><LockKeyhole size={14} /><span className="library-button-label">Lock</span></button>
-      {canEdit && items.length > 0 && <button className="primary-button compact" disabled={!online} title={!online ? RECONNECT_TO_CREATE : undefined} aria-label="New item" onClick={() => setOpen(true)}><Plus size={14} /><span className="library-button-label">New item</span></button>}
+      {canEdit && items.length > 0 && <button className="primary-button compact" disabled={!online} title={!online ? RECONNECT_TO_CREATE : undefined} aria-label="New item" onClick={() => setEditing("new")}><Plus size={14} /><span className="library-button-label">New item</span></button>}
     </div>
+    <VaultConversion projectId={projectId} sessionToken={sessionToken} canEdit={canEdit} legacyCount={legacyCount} online={online} />
     {notice && <p className="notice danger" role="alert">{notice}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setNotice("")}><X size={14} /></button></p>}
-    {!items.length ? <ProjectEmpty icon={KeyRound} title="No secrets">{canEdit && <button className="primary-button compact" disabled={!online} onClick={() => setOpen(true)}><Plus size={14} />New item</button>}</ProjectEmpty>
+    {!items.length ? <ProjectEmpty icon={KeyRound} title="No secrets">{canEdit && <button className="primary-button compact" disabled={!online} title={!online ? RECONNECT_TO_CREATE : undefined} onClick={() => setEditing("new")}><Plus size={14} />New item</button>}</ProjectEmpty>
       : !filtered.length ? <ProjectEmpty icon={Search} title="No matching items" />
         : <ul className="vault-list">{filtered.map(item => {
           const Icon = kindIcons[item.kind || ""] || KeyRound;
           const secret = revealed[item._id];
           const host = hostOf(item.url);
+          const locked = item.needsConversion;
           return <li className={clsx("vault-row", secret !== undefined && "revealed")} key={item._id}>
             <span className="library-file-icon"><Icon size={15} /></span>
             <div className="vault-row-main">
               <strong>{item.title}</strong>
-              <span className="vault-row-meta"><span>{kinds[item.kind as Kind] || "Secret"}</span>{item.username && <span>{item.username}</span>}{host && <a href={item.url} target="_blank" rel="noreferrer noopener">{host}</a>}</span>
+              <span className="vault-row-meta"><span>{kinds[item.kind as Kind] || "Secret"}</span>{locked && <span className="vault-needs-conversion" title="Encrypted with the old Vault password. Convert old items once to read it.">Needs conversion</span>}{item.username && <span>{item.username}</span>}{host && <a href={item.url} target="_blank" rel="noreferrer noopener">{host}</a>}</span>
               {secret !== undefined && <code className="secret-code">{secret}</code>}
             </div>
             <div className="library-row-actions">
-              <button className="icon-button" aria-label={secret !== undefined ? `Hide ${item.title}` : `Reveal ${item.title}`} title={secret !== undefined ? "Hide" : "Reveal"} aria-pressed={secret !== undefined} onClick={() => reveal(item)}>{secret !== undefined ? <EyeOff size={15} /> : <Eye size={15} />}</button>
-              <button className={clsx("icon-button", copied === item._id && "copied")} aria-label={copied === item._id ? "Copied" : `Copy ${item.title}`} title="Copy" onClick={() => reveal(item, true)}>{copied === item._id ? <Check size={15} /> : <Copy size={15} />}</button>
+              {!locked && <button className="icon-button" aria-label={secret !== undefined ? `Hide ${item.title}` : `Reveal ${item.title}`} title={secret !== undefined ? "Hide" : "Reveal"} aria-pressed={secret !== undefined} onClick={() => reveal(item)}>{secret !== undefined ? <EyeOff size={15} /> : <Eye size={15} />}</button>}
+              {!locked && <button className={clsx("icon-button", copied === item._id && "copied")} aria-label={copied === item._id ? "Copied" : `Copy ${item.title}`} title="Copy" onClick={() => reveal(item, true)}>{copied === item._id ? <Check size={15} /> : <Copy size={15} />}</button>}
+              {canEdit && <button type="button" className="icon-button" aria-label={`Edit ${item.title}`} title="Edit" disabled={!online} onClick={() => setEditing(item)}><Pencil size={15} /></button>}
               {canEdit && <button type="button" className="icon-button" aria-label={`Delete ${item.title}`} title="Delete" onClick={() => setDeleting(item)}><Trash2 size={15} /></button>}
             </div>
           </li>;
         })}</ul>}
-    {open && <VaultItemDialog projectId={projectId} sessionToken={sessionToken} passphrase={passphrase} online={online} verify={async () => {
-      // Someone may have created the vault's first item since this one was unlocked empty: check against it now.
-      const anchor = vaultAnchor(items);
-      if (!anchor || anchor._id === verifiedId) return;
-      try { await decryptSecret(anchor, passphrase); setVerifiedId(anchor._id); }
-      catch { throw new Error("This vault uses a different passphrase"); }
-    }} onClose={() => setOpen(false)} />}
+    {editing && <VaultItemDialog projectId={projectId} sessionToken={sessionToken} online={online} item={editing === "new" ? null : editing} onSaved={id => hide(id)} onClose={() => setEditing(null)} />}
     {deleting && <DeleteDialog title="Delete vault item" subject={deleting.title} icon={(() => { const Icon = kindIcons[deleting.kind || ""] || KeyRound; return <Icon size={15} />; })()} onCancel={() => setDeleting(null)} onConfirm={async () => {
       await remove({ projectId, sessionToken, credentialId: deleting._id });
-      setRevealed(current => { const next = { ...current }; delete next[deleting._id]; return next; });
+      hide(deleting._id);
       setDeleting(null);
     }} />}
   </section>;
 }
 
-function VaultItemDialog({ projectId, sessionToken, passphrase, online, verify, onClose }: Props & { passphrase: string; online: boolean; verify: () => Promise<void>; onClose: () => void }) {
+/**
+ * The one-time conversion of items from before the Vault was sealed by the server. The old password opens them in this
+ * browser (lib/vaultCrypto.ts); each value is then sealed by the server and its password-encrypted copy dropped. It also
+ * converts the person's own legacy personal items that open with the same password. Never asked again afterwards.
+ */
+function VaultConversion({ projectId, sessionToken, canEdit, legacyCount, online }: Props & { canEdit: boolean; legacyCount: number; online: boolean }) {
+  const projectLegacy = useQuery(api.credentials.legacyItems, legacyCount && canEdit ? { projectId, sessionToken } : "skip");
+  const personalLegacy = useQuery(api.personalCredentials.legacyItems, { sessionToken });
+  const convertProject = useMutation(api.credentials.convertLegacy);
+  const convertPersonal = useMutation(api.personalCredentials.convertLegacy);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+  const project = projectLegacy ?? [];
+  const personal = personalLegacy ?? [];
+  if (!legacyCount && !personal.length) return done ? <p className="notice success" role="status">{done}</p> : null;
+  if (!canEdit && !personal.length) return <p className="notice vault-conversion" role="status">{legacyCount === 1 ? "1 old item needs" : `${legacyCount} old items need`} a one-time conversion. A project editor who knows the old Vault password converts them in this Vault.</p>;
+
+  const convert = async (event: FormEvent) => {
+    event.preventDefault(); if (!online || !password) return;
+    setBusy(true); setError(""); setDone("");
+    try {
+      const open = async (rows: Array<EncryptedSecret & { id: string }>) => (await Promise.all(rows.map(async row => {
+        try { return { id: row.id, secret: await decryptSecret(row, password) }; } catch { return null; }
+      }))).filter(row => row !== null);
+      const [projectOpened, personalOpened] = await Promise.all([open(project), open(personal)]);
+      const total = project.length + personal.length;
+      const opened = projectOpened.length + personalOpened.length;
+      if (!opened) { setError("Wrong password: no old item opened with it."); return; }
+      if (projectOpened.length) await convertProject({ projectId, sessionToken, items: projectOpened.map(row => ({ credentialId: row.id as Id<"credentials">, secret: row.secret })) });
+      if (personalOpened.length) await convertPersonal({ sessionToken, items: personalOpened.map(row => ({ itemId: row.id as Id<"personalCredentials">, secret: row.secret })) });
+      setPassword("");
+      if (opened < total) setError(`${opened} of ${total} old items converted. The rest did not open with this password; enter the password they were saved with.`);
+      else setDone(opened === 1 ? "1 old item converted. The Vault no longer needs a password." : `${opened} old items converted. The Vault no longer needs a password.`);
+    } catch (failure) { setError(errorText(failure, "Could not convert the old items")); }
+    finally { setBusy(false); }
+  };
+  const count = (canEdit ? legacyCount : 0) + personal.length;
+  return <form className="notice vault-conversion" onSubmit={convert} aria-label="Convert old items">
+    <span><strong>Convert old items: enter the old Vault password once.</strong> {count === 1 ? "1 item was" : `${count} items were`} saved with the old Vault password. After converting, the Vault never asks for a password again.</span>
+    <span className="vault-conversion-row">
+      <input type="password" aria-label="Old Vault password" placeholder="Old Vault password" autoComplete="off" value={password} onChange={event => { setPassword(event.target.value); setError(""); }} required aria-invalid={Boolean(error) || undefined} aria-describedby={error ? "vault-conversion-error" : undefined} />
+      <button className="primary-button compact" title={!online ? RECONNECT_TO_CREATE : undefined} disabled={busy || !password || !online || (canEdit && legacyCount > 0 && projectLegacy === undefined) || personalLegacy === undefined}>{busy && <Loader2 className="spin" size={15} />}Convert</button>
+    </span>
+    {error && <span id="vault-conversion-error" role="alert" className="field-error">{error}</span>}
+  </form>;
+}
+
+function VaultItemDialog({ projectId, sessionToken, online, item, onSaved, onClose }: Props & { online: boolean; item: VaultItem | null; onSaved: (id: Id<"credentials">) => void; onClose: () => void }) {
   const create = useMutation(api.credentials.create);
-  const [kind, setKind] = useState<Kind>("password");
-  const [title, setTitle] = useState("");
-  const [username, setUsername] = useState("");
-  const [url, setUrl] = useState("");
+  const update = useMutation(api.credentials.update);
+  const editableKind = !item || !item.kind || item.kind in kinds;
+  const [kind, setKind] = useState<Kind>(item?.kind && item.kind in kinds ? item.kind as Kind : "password");
+  const [title, setTitle] = useState(item?.title ?? "");
+  const [username, setUsername] = useState(item?.username ?? "");
+  const [url, setUrl] = useState(item?.url ?? "");
   const [secret, setSecret] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Editing keeps the value unless a new one is typed; a legacy item needs a value only if it is to become readable now.
+  const secretRequired = !item;
   const generate = () => { const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*-_"; setSecret(Array.from(crypto.getRandomValues(new Uint8Array(32))).map(n => alphabet[n % alphabet.length]).join("")); setShow(true); };
   const save = async (e: FormEvent) => {
     e.preventDefault(); if (!online) return; setBusy(true); setError("");
     try {
-      await verify();
-      await create({ projectId, sessionToken, kind, title, username: kind === "password" && username ? username : undefined, url: kind === "password" && url ? url : undefined, ...await encryptSecret(secret, passphrase) });
+      const login = kind === "password";
+      if (item) {
+        const fields = editableKind ? { kind, username: login ? username : "", url: login ? url : "" } : {};
+        await update({ projectId, sessionToken, credentialId: item._id, ...fields, title, ...(secret ? { secret } : {}) });
+        onSaved(item._id);
+      } else await create({ projectId, sessionToken, kind, title, username: login && username ? username : undefined, url: login && url ? url : undefined, secret });
       onClose();
     } catch (error) { setError(errorText(error, "Could not save")); }
     finally { setBusy(false); }
   };
-  return <Dialog title="New vault item" onClose={onClose}><form className="stack-form library-form" onSubmit={save}>
-    <div className="segmented-control library-kind" role="radiogroup" aria-label="Type">{(Object.keys(kinds) as Kind[]).map(value => <button key={value} type="button" role="radio" aria-checked={kind === value} className={kind === value ? "active" : ""} onClick={() => setKind(value)}>{kinds[value]}</button>)}</div>
+  const secretLabel = !editableKind ? "Value" : kind === "note" ? "Note" : kind === "password" ? "Password" : kind === "api_key" ? "Key" : "Secret";
+  const keepHint = item ? (item.needsConversion ? "Leave empty to keep the old value (it still needs conversion)" : "Leave empty to keep the current value") : undefined;
+  return <Dialog title={item ? "Edit vault item" : "New vault item"} onClose={onClose}><form className="stack-form library-form" onSubmit={save}>
+    {editableKind && <div className="segmented-control library-kind" role="radiogroup" aria-label="Type">{(Object.keys(kinds) as Kind[]).map(value => <button key={value} type="button" role="radio" aria-checked={kind === value} className={kind === value ? "active" : ""} onClick={() => setKind(value)}>{kinds[value]}</button>)}</div>}
     <label>Name<input value={title} onChange={e => setTitle(e.target.value)} required maxLength={150} /></label>
-    {kind === "password" && <div className="library-form-pair">
+    {kind === "password" && editableKind && <div className="library-form-pair">
       <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="off" /></label>
       <label>Website<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://" /></label>
     </div>}
-    {kind === "note"
-      ? <label>Note<textarea value={secret} onChange={e => setSecret(e.target.value)} required rows={5} spellCheck={false} /></label>
-      : <label>{kind === "password" ? "Password" : kind === "api_key" ? "Key" : "Secret"}<span className="secret-input">
-        <input type={show ? "text" : "password"} value={secret} onChange={e => setSecret(e.target.value)} required autoComplete="new-password" spellCheck={false} />
+    {kind === "note" || !editableKind
+      ? <label>{secretLabel}<textarea value={secret} onChange={e => setSecret(e.target.value)} required={secretRequired} placeholder={keepHint} rows={5} spellCheck={false} /></label>
+      : <label>{secretLabel}<span className="secret-input">
+        <input type={show ? "text" : "password"} value={secret} onChange={e => setSecret(e.target.value)} required={secretRequired} placeholder={keepHint} autoComplete="new-password" spellCheck={false} />
         <button type="button" className="icon-button" aria-label={show ? "Hide" : "Show"} aria-pressed={show} onClick={() => setShow(value => !value)}>{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
         {kind === "password" && <button type="button" className="icon-button" aria-label="Generate password" title="Generate password" onClick={generate}><Shuffle size={15} /></button>}
       </span></label>}

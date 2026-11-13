@@ -1,8 +1,7 @@
 /**
  * Service sign-ins: a Vault item of kind "service" holds the tokens a service's command line reads from its
- * environment, encrypted with the Vault passphrase as one JSON object of environment variable name to value. While
- * a person has the Vault unlocked and the item is marked usable by agents, their computer's agents get those
- * variables, so `vercel deploy` or `npx convex deploy` run signed in without the token ever being typed into chat.
+ * environment, sealed by the server as one JSON object of environment variable name to value. When the item is
+ * marked usable by agents, agents read those variables over MCP (vault_get), so `vercel deploy` or `npx convex deploy` run signed in without the token ever being typed into chat.
  */
 
 interface VaultServiceField {

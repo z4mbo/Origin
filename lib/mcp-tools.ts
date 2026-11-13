@@ -12,7 +12,7 @@ export const MCP_TOOLS = [
   { name: "list_assets", title: "List assets", write: false, description: "Project library files and issue attachments: name, kind, url, project, issue and date. Uploaded issue files have no url; open the issue." },
   { name: "get_asset", title: "Get asset", write: false, description: "One asset by id, with its notes." },
   { name: "vault_list", title: "List vault items", write: false, description: "Vault items a member allowed agents to use: name, service and the environment variables a service sign-in sets. No values." },
-  { name: "vault_get", title: "Get vault item", write: false, description: "One allowed Vault item's value. Pass the Vault passphrase; without it, or with a wrong one, the Vault stays locked." },
+  { name: "vault_get", title: "Get vault item", write: false, description: "One allowed Vault item's value. No password needed: values are sealed by the server. An item still on the old Vault password returns an error until a member converts it once in the Vault." },
   { name: "list_repos", title: "List repositories", write: false, description: "Projects with a linked GitHub repository." },
   { name: "list_pull_requests", title: "List pull requests", write: false, description: "Pull requests linked to issues, with their issue keys, state, checks and review. Filter by project and state." },
   { name: "list_agents", title: "List agents", write: false, description: "Agents that can be delegated issues in a project (connections their owner listed under Settings > Agents), and whether this connection takes issues." },
