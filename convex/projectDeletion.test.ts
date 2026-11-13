@@ -24,6 +24,7 @@ beforeEach(() => {
     return new Response("{}", { status: 200 });
   });
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.stubEnv("ORIGIN_SEALING_KEY", btoa(String.fromCharCode(...new Array(32).fill(7))));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -37,7 +38,7 @@ async function seedProject(t: Test, sessionToken: string, ownerId: Id<"users">, 
   const taskId = await t.mutation(api.tasks.createTask, { ...scope, columnId, title: "Ship it", priority: "high" });
   const otherTaskId = await t.mutation(api.tasks.createTask, { ...scope, columnId, title: "Then this", priority: "low" });
   await t.mutation(api.tasks.addComment, { ...scope, taskId, body: "On it" });
-  await t.mutation(api.credentials.create, { ...scope, title: "Vault entry", ciphertext: "c", iv: "i", salt: "s", iterations: 600000, kdf: "PBKDF2" });
+  await t.mutation(api.credentials.create, { ...scope, title: "Vault entry", secret: "s" });
   await t.mutation(api.wiki.create, { ...scope, title: "Notes", content: "Body", type: "wiki", tags: [] });
   await t.mutation(api.design.createToken, { ...scope, type: "color", name: "Accent", value: "#123456" });
   await t.mutation(api.projects.sendChatMessage, { ...scope, body: "Hello" });

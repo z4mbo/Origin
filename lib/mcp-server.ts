@@ -68,8 +68,8 @@ export function originMcpServer(token: string, write: boolean) {
     a => run(() => convex.query(api.mcp.vaultItems, { token, ...a })));
   server.registerTool("vault_get", {
     ...meta("vault_get"),
-    inputSchema: z.object({ itemId: ref("Vault item id from vault_list"), passphrase: z.string().min(1).max(1000).optional().describe("The Vault passphrase. Used for this call only; never stored.") }), annotations: read,
-  }, ({ itemId, passphrase }) => run(async () => JSON.stringify(await openVaultItem(JSON.parse(await convex.query(api.mcp.vaultItem, { token, itemId })), passphrase))));
+    inputSchema: z.object({ itemId: ref("Vault item id from vault_list") }), annotations: read,
+  }, ({ itemId }) => run(async () => JSON.stringify(openVaultItem(JSON.parse(await convex.query(api.mcp.vaultItem, { token, itemId }))))));
   server.registerTool("list_repos", { ...meta("list_repos"), inputSchema: z.object({}), annotations: read },
     () => run(() => convex.query(api.mcp.repositories, { token })));
   server.registerTool("list_pull_requests", {

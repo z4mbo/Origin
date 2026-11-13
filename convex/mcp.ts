@@ -10,6 +10,7 @@ import { priorityValidator } from "./lib/validators";
 import { addCommentRecord, changeCriteriaRecord, createTaskRecord, moveTaskRecord, updateTaskRecord } from "./tasks";
 import { linkedPullRequests, repoName } from "./taskPRs";
 import { vaultService } from "../lib/vault-services";
+import { needsConversion, openVaultValue, personalVaultPurpose, projectVaultPurpose } from "./lib/vaultSealing";
 import { repositorySlug } from "../lib/issue-webhook";
 import { containsMention, mentionToken } from "../lib/issue-mentions";
 import { OAUTH_GRANT_PREFIX, PAT_PREFIX } from "../lib/mcp-tokens";
@@ -474,9 +475,9 @@ export const asset = query({
 });
 
 // Vault: only items a member marked "agents may use" (credentials.setAgentUse) in projects the token owner belongs to,
-// and the owner's own personal items marked the same way. Values are end-to-end encrypted with the Vault passphrase:
-// Convex returns the sealed envelope only for allowed items, and the MCP route (lib/mcp-vault.ts) opens it with the
-// passphrase the agent passes, for that call only. Nothing here ever sees or logs a plaintext value.
+// and the owner's own personal items marked the same way. Values are sealed by the server (convex/lib/vaultSealing.ts),
+// so vault_get needs no password; legacy items still encrypted with the old Vault password fail until a member
+// converts them once in the Vault. Values are never logged.
 
 type VaultRow = Doc<"credentials"> | Doc<"personalCredentials">;
 function vaultSummary(item: VaultRow, project: Doc<"projects"> | null) {
@@ -485,7 +486,7 @@ function vaultSummary(item: VaultRow, project: Doc<"projects"> | null) {
     id: item._id, name: item.title, kind: item.kind ?? "password", service: service?.id ?? null,
     env: service?.fields.map(field => field.env) ?? [], scope: project ? "project" : "personal",
     project: project?.name ?? null, projectId: project?._id ?? null, ...(item.username ? { username: item.username } : {}),
-    updatedAt: new Date(item.updatedAt).toISOString(),
+    updatedAt: new Date(item.updatedAt).toISOString(), ...(needsConversion(item) ? { needsConversion: true } : {}),
   };
 }
 
@@ -498,7 +499,7 @@ export const vaultItems = query({
       for (const item of await ctx.db.query("credentials").withIndex("by_project", q => q.eq("projectId", project._id)).take(500)) if (item.agentUse) items.push(vaultSummary(item, project));
     }
     if (!a.project) for (const item of await ctx.db.query("personalCredentials").withIndex("by_userId", q => q.eq("userId", access.user._id)).take(500)) if (item.agentUse) items.push(vaultSummary(item, null));
-    return json({ items, note: "Only items a member allowed agents to use are listed. vault_get needs the Vault passphrase to read a value." });
+    return json({ items, note: "Only items a member allowed agents to use are listed. vault_get returns a value; items marked needsConversion must first be converted once in the Vault." });
   }),
 });
 
@@ -519,7 +520,9 @@ export const vaultItem = query({
     }
     if (!item) throw new ConvexError(`Vault item not found: ${a.itemId}. Use an id from vault_list.`);
     if (!item.agentUse) throw new ConvexError(`Agents may not use "${item.title}". A member can allow agent use for it in the Vault.`);
-    return json({ ...vaultSummary(item, project), sealed: { ciphertext: item.ciphertext, iv: item.iv, salt: item.salt, iterations: item.iterations, kdf: item.kdf } });
+    if (needsConversion(item)) throw new ConvexError(`"${item.title}" still uses the old Vault password. Open the Vault in Origin and convert old items once (enter the old Vault password); after that agents can read it without a password.`);
+    const purpose = project ? projectVaultPurpose(project._id) : personalVaultPurpose(access.user._id);
+    return json({ ...vaultSummary(item, project), value: await openVaultValue(item, purpose) });
   }),
 });
 

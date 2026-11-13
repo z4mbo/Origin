@@ -35,6 +35,7 @@ import {
   tokenTypeValidator,
   userRoleValidator,
   userStatusValidator,
+  vaultValueFields,
   wikiTypeValidator,
 } from "./lib/validators";
 
@@ -421,18 +422,14 @@ export default defineSchema({
     username: v.optional(v.string()),
     url: v.optional(v.string()),
     notes: v.optional(v.string()),
-    ciphertext: v.string(),
-    iv: v.string(),
-    salt: v.string(),
-    iterations: v.number(),
-    kdf: v.string(),
-    /** The project's agents may use this item while a member has the vault unlocked. */
+    ...vaultValueFields,
+    /** The project's agents may read this item over MCP. */
     agentUse: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_project", ["projectId"]),
 
-  /** One person's own Vault: only they list it, and their agents use an item in every project while they have it unlocked. */
+  /** One person's own Vault: only they list and read it, and their agents may read an item marked for agent use. */
   personalCredentials: defineTable({
     userId: v.id("users"),
     kind: credentialKindValidator,
@@ -440,11 +437,7 @@ export default defineSchema({
     title: v.string(),
     username: v.optional(v.string()),
     url: v.optional(v.string()),
-    ciphertext: v.string(),
-    iv: v.string(),
-    salt: v.string(),
-    iterations: v.number(),
-    kdf: v.string(),
+    ...vaultValueFields,
     agentUse: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),

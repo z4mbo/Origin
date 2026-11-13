@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { createSession } from "./lib/auth";
@@ -119,22 +119,50 @@ describe("assets", () => {
 });
 
 describe("vault", () => {
-  const sealed = { ciphertext: "c", iv: "i", salt: "s", iterations: 1, kdf: "PBKDF2-SHA256/AES-256-GCM" };
-  test("lists and returns only items agents may use, in projects the token can see, plus the owner's own", async () => {
+  const legacy = { ciphertext: "c", iv: "i", salt: "s", iterations: 1, kdf: "PBKDF2-SHA256/AES-256-GCM" };
+  beforeEach(() => { vi.stubEnv("ORIGIN_SEALING_KEY", btoa(String.fromCharCode(...new Array(32).fill(9)))); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  async function vaultFixture() {
     const f = await fixture();
-    const ids = await f.t.run(async ctx => ({
-      allowed: await ctx.db.insert("credentials", { projectId: f.shared, kind: "service", service: "convex", title: "Convex deploy", ...sealed, agentUse: true, createdAt: 1, updatedAt: 1 }),
-      denied: await ctx.db.insert("credentials", { projectId: f.shared, kind: "password", title: "Admin login", ...sealed, createdAt: 1, updatedAt: 1 }),
-      other: await ctx.db.insert("credentials", { projectId: f.secret, kind: "api_key", title: "Secret key", ...sealed, agentUse: true, createdAt: 1, updatedAt: 1 }),
-      mine: await ctx.db.insert("personalCredentials", { userId: f.member.id, kind: "api_key", title: "My npm", ...sealed, agentUse: true, createdAt: 1, updatedAt: 1 }),
-      theirs: await ctx.db.insert("personalCredentials", { userId: f.owner.id, kind: "api_key", title: "Owner npm", ...sealed, agentUse: true, createdAt: 1, updatedAt: 1 }),
-    }));
+    const owner = { projectId: f.shared, sessionToken: f.owner.session };
+    const allowed = await f.t.mutation(api.credentials.create, { ...owner, kind: "service", service: "convex", title: "Convex deploy", secret: JSON.stringify({ CONVEX_DEPLOY_KEY: "prod:abc" }) });
+    await f.t.mutation(api.credentials.setAgentUse, { ...owner, credentialId: allowed, agentUse: true });
+    const denied = await f.t.mutation(api.credentials.create, { ...owner, kind: "password", title: "Admin login", secret: "hunter2" });
+    const other = await f.t.mutation(api.credentials.create, { projectId: f.secret, sessionToken: f.owner.session, kind: "api_key", title: "Secret key", secret: "sk-other" });
+    await f.t.mutation(api.credentials.setAgentUse, { projectId: f.secret, sessionToken: f.owner.session, credentialId: other, agentUse: true });
+    const mine = await f.t.mutation(api.personalCredentials.create, { sessionToken: f.member.session, kind: "api_key", title: "My npm", secret: "npm_mine" });
+    await f.t.mutation(api.personalCredentials.setAgentUse, { sessionToken: f.member.session, itemId: mine, agentUse: true });
+    const theirs = await f.t.mutation(api.personalCredentials.create, { sessionToken: f.owner.session, kind: "api_key", title: "Owner npm", secret: "npm_theirs" });
+    await f.t.mutation(api.personalCredentials.setAgentUse, { sessionToken: f.owner.session, itemId: theirs, agentUse: true });
+    const old = await f.t.run(ctx => ctx.db.insert("credentials", { projectId: f.shared, kind: "api_key", title: "Old key", ...legacy, agentUse: true, createdAt: 1, updatedAt: 1 }));
+    return { f, ids: { allowed, denied, other, mine, theirs, old } };
+  }
+
+  test("lists and returns only items agents may use, in projects the token can see, plus the owner's own, without a password", async () => {
+    const { f, ids } = await vaultFixture();
     const { items } = JSON.parse(await f.t.query(api.mcp.vaultItems, { token: f.memberToken }));
-    expect(items.map((item: { name: string; env: string[]; scope: string }) => [item.name, item.env, item.scope])).toEqual([["Convex deploy", ["CONVEX_DEPLOY_KEY"], "project"], ["My npm", [], "personal"]]);
-    expect(JSON.stringify(items)).not.toContain("ciphertext");
-    expect(JSON.parse(await f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.allowed }))).toMatchObject({ name: "Convex deploy", sealed });
+    expect(items.map((item: { name: string; env: string[]; scope: string; needsConversion?: boolean }) => [item.name, item.env, item.scope, item.needsConversion ?? false])).toEqual([
+      ["Convex deploy", ["CONVEX_DEPLOY_KEY"], "project", false], ["Old key", [], "project", true], ["My npm", [], "personal", false],
+    ]);
+    expect(JSON.stringify(items)).not.toMatch(/ciphertext|sealedValue|prod:abc|npm_mine/);
+    expect(JSON.parse(await f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.allowed }))).toMatchObject({ name: "Convex deploy", value: JSON.stringify({ CONVEX_DEPLOY_KEY: "prod:abc" }) });
+    expect(JSON.parse(await f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.mine }))).toMatchObject({ name: "My npm", scope: "personal", value: "npm_mine" });
     await expect(f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.denied })).rejects.toThrow("Agents may not use \"Admin login\"");
     for (const id of [ids.other, ids.theirs]) await expect(f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: id })).rejects.toThrow("Vault item not found");
+  });
+
+  test("a legacy item asks for its one-time conversion in the Vault instead of a password", async () => {
+    const { f, ids } = await vaultFixture();
+    await expect(f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.old })).rejects.toThrow(/"Old key" still uses the old Vault password\. Open the Vault in Origin and convert old items once/);
+    await f.t.mutation(api.credentials.convertLegacy, { projectId: f.shared, sessionToken: f.owner.session, items: [{ credentialId: ids.old, secret: "sk-old" }] });
+    expect(JSON.parse(await f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.old }))).toMatchObject({ name: "Old key", value: "sk-old" });
+  });
+
+  test("without ORIGIN_SEALING_KEY vault_get returns the sealing error", async () => {
+    const { f, ids } = await vaultFixture();
+    vi.stubEnv("ORIGIN_SEALING_KEY", "");
+    await expect(f.t.query(api.mcp.vaultItem, { token: f.memberToken, itemId: ids.allowed })).rejects.toThrow("ORIGIN_SEALING_KEY");
   });
 });
 

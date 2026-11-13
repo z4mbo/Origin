@@ -52,7 +52,7 @@ npx convex dev --once --local-cloud-port 3280 --local-site-port 3281
 
 1. Back up: `npx convex export` with the production deploy key, run by the operator.
 2. Check the production Convex environment has `ORIGIN_INTEGRATION_SECRET`, `ORIGIN_PUBLIC_URL` and
-   `ORIGIN_SEALING_KEY` (keep an existing sealing key; changing it makes stored GitHub credentials unreadable).
+   `ORIGIN_SEALING_KEY` (keep an existing sealing key; changing it makes stored GitHub credentials and Vault values unreadable).
 3. `/home/z4mbo/Dev/.origin-tools/cvx/schema-parity.sh <repo>` prints `same` for every file.
 4. Deploy Convex (`npx convex deploy`), then the Next server with the same secret and the persistent `/data/origin`.
 5. Smoke: sign in, open a board and an issue, open Chat (history appears), check `/api/mcp` answers 401 without a

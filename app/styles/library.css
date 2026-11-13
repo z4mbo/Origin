@@ -106,12 +106,12 @@
 .secret-input:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--accent-soft); }
 .secret-input input { flex: 1; min-width: 0; border: 0; background: transparent; box-shadow: none; font-family: var(--font-mono); }
 .secret-input input:focus { box-shadow: none; }
-.vault-locked { display: grid; flex: 1; justify-items: center; align-content: center; gap: var(--space-2); width: min(340px, 100%); min-height: 280px; margin: 0 auto; padding: var(--space-10) 0 max(var(--space-10), 10vh); text-align: center; }
-.vault-locked h2 { margin: 0; color: var(--text-1); font-size: var(--text-md); font-weight: var(--weight-medium); }
-.vault-locked-count { color: var(--text-3); font-size: var(--text-sm); }
-.vault-unlock { display: flex; gap: var(--space-2); width: 100%; margin-top: var(--space-3); }
-.vault-unlock input { flex: 1; min-width: 0; }
-.vault-unlock input[aria-invalid="true"] { border-color: rgba(242, 113, 107, 0.6); }
+.vault-needs-conversion { color: var(--amber); }
+.vault-conversion { display: grid; gap: var(--space-2); }
+.vault-conversion strong { font-weight: var(--weight-medium); }
+.vault-conversion-row { display: flex; gap: var(--space-2); max-width: 420px; }
+.vault-conversion-row input { flex: 1; min-width: 0; }
+.vault-conversion-row input[aria-invalid="true"] { border-color: rgba(242, 113, 107, 0.6); }
 .field-error { margin: 0; color: var(--red); font-size: var(--text-sm); animation: library-fade var(--duration) var(--ease-out); }
 
 @media (max-width: 760px) {
@@ -146,7 +146,7 @@
   .library-toolbar .library-view button::after { content: none; }
   .library-search input { position: relative; z-index: 1; }
   .library-row-actions .icon-button { width: 44px; min-width: 44px; height: 44px; }
-  .vault-unlock input, .vault-unlock .primary-button { min-height: 44px; }
+  .vault-conversion-row input, .vault-conversion-row .primary-button { min-height: 44px; }
   .asset-card:hover { transform: none; }
 }
 @media (pointer: coarse) and (min-width: 761px) {

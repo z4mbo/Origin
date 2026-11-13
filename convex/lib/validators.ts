@@ -89,3 +89,19 @@ export const credentialKindValidator = v.union(
 );
 
 export const canvasKindValidator = v.union(v.literal("design"), v.literal("board"), v.literal("deck"));
+
+/**
+ * How a Vault item (`credentials`, `personalCredentials`) stores its value. `format: "sealed"` items keep it in
+ * `sealedValue`, sealed by the server with ORIGIN_SEALING_KEY (convex/lib/vaultSealing.ts). Items without a format are
+ * legacy: the value was encrypted in the browser with the old Vault password (lib/vaultCrypto.ts) and stays unreadable
+ * until someone who knows that password converts it once in the Vault, which drops these legacy fields.
+ */
+export const vaultValueFields = {
+  format: v.optional(v.literal("sealed")),
+  sealedValue: v.optional(v.string()),
+  ciphertext: v.optional(v.string()),
+  iv: v.optional(v.string()),
+  salt: v.optional(v.string()),
+  iterations: v.optional(v.number()),
+  kdf: v.optional(v.string()),
+};
