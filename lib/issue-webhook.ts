@@ -12,8 +12,15 @@
  * agent now on the issue (null when removed) and `changes.delegate` names the agent before and after. Other events
  * carry `issue.delegate` only while an agent is on the issue, so payloads for issues without one are unchanged.
  *
+ * Backlog: `issue.status` is the stored column title (older boards still call the Backlog column "Draft"), so receivers
+ * should read `issue.backlog` (true while the issue is in the board's draft/Backlog column, whatever its title) and
+ * `issue.statusLabel` (the name the board shows, e.g. "Backlog" for a column titled "Draft"). issue.updated carries
+ * `changes.backlog` when the issue enters or leaves Backlog. New work: issue.created with `issue.backlog` false, or
+ * issue.updated with `changes.backlog` { from: true, to: false }; Backlog issues can be ignored.
+ *
  * project.created and project.deleted share the envelope (id, type, occurredAt, workspace) and carry `project` and
- * `actor` instead of `issue` and `changes`, so a receiver can keep one agent per project in step with Origin.
+ * `actor` instead of `issue` and `changes` (so no Backlog fields), so a receiver can keep one agent per project in step
+ * with Origin.
  */
 
 export type IssueWebhookEvent = "issue.created" | "issue.updated" | "issue.delegated";
@@ -23,7 +30,7 @@ export const ORIGIN_WEBHOOK_EVENTS: readonly OriginWebhookEvent[] = ["issue.crea
 export type IssueWebhookCriterion = { text: string; checked: boolean };
 export type IssueWebhookDelegate = { id: string; name: string };
 export type IssueWebhookChanges = {
-  status?: { from: string; to: string }; completed?: { from: boolean; to: boolean };
+  status?: { from: string; to: string }; backlog?: { from: boolean; to: boolean }; completed?: { from: boolean; to: boolean };
   delegate?: { from: IssueWebhookDelegate | null; to: IssueWebhookDelegate | null };
 };
 export type IssueWebhookPayload = {
@@ -33,8 +40,8 @@ export type IssueWebhookPayload = {
   workspace: { id: string; name: string; slug: string };
   project: { id: string; name: string; repo: string | null };
   issue: {
-    id: string; key: string; title: string; description: string; labels: string[]; url: string; status: string; completed: boolean;
-    assignee: { email: string; name: string } | null; delegate?: IssueWebhookDelegate | null; acceptanceCriteria: IssueWebhookCriterion[];
+    id: string; key: string; title: string; description: string; labels: string[]; url: string; status: string; statusLabel: string; backlog: boolean;
+    completed: boolean; assignee: { email: string; name: string } | null; delegate?: IssueWebhookDelegate | null; acceptanceCriteria: IssueWebhookCriterion[];
   };
   changes: IssueWebhookChanges | null;
 };
@@ -45,7 +52,9 @@ export type IssueWebhookInput = {
   workspace: { id: string; name: string; slug: string };
   project: { id: string; name: string; repoUrl?: string };
   issue: {
-    id: string; key: string; title: string; description?: string; labels?: readonly string[]; status: string; completed: boolean;
+    id: string; key: string; title: string; description?: string; labels?: readonly string[];
+    /** The stored column title; `statusLabel` is the name the board shows (columnLabel) and `backlog` whether it is the draft column. */
+    status: string; statusLabel: string; backlog: boolean; completed: boolean;
     assignee?: { email: string; name?: string } | null; acceptanceCriteria?: readonly IssueWebhookCriterion[];
     /** The agent on the issue; leave it out when there is none (issue.delegated sends null instead). */
     delegate?: IssueWebhookDelegate | null;
@@ -73,12 +82,15 @@ export function repositorySlug(repoUrl?: string) {
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
-/** What changed between two snapshots of an issue's status, or null when neither the status nor completion did. */
-export function issueWebhookChanges(before: { status: string; completed: boolean }, after: { status: string; completed: boolean }): IssueWebhookChanges | null {
+type IssueStatusSnapshot = { status: string; backlog: boolean; completed: boolean };
+
+/** What changed between two snapshots of an issue's status, or null when neither the status, Backlog nor completion did. */
+export function issueWebhookChanges(before: IssueStatusSnapshot, after: IssueStatusSnapshot): IssueWebhookChanges | null {
   const changes: IssueWebhookChanges = {};
   if (before.status !== after.status) changes.status = { from: before.status, to: after.status };
+  if (before.backlog !== after.backlog) changes.backlog = { from: before.backlog, to: after.backlog };
   if (before.completed !== after.completed) changes.completed = { from: before.completed, to: after.completed };
-  return changes.status || changes.completed ? changes : null;
+  return changes.status || changes.backlog || changes.completed ? changes : null;
 }
 
 /** The payload with its keys in the documented order, so `JSON.stringify` of it is the exact body. */
@@ -98,6 +110,8 @@ export function issueWebhookPayload(input: IssueWebhookInput): IssueWebhookPaylo
       labels: [...input.issue.labels ?? []],
       url: `${origin}/${input.workspace.slug}/issue/${input.issue.key}`,
       status: input.issue.status,
+      statusLabel: input.issue.statusLabel,
+      backlog: input.issue.backlog,
       completed: input.issue.completed,
       assignee: input.issue.assignee?.email ? { email: input.issue.assignee.email, name: input.issue.assignee.name || input.issue.assignee.email } : null,
       ...(input.issue.delegate ? { delegate: { id: input.issue.delegate.id, name: input.issue.delegate.name } } : input.type === "issue.delegated" ? { delegate: null } : {}),
@@ -252,10 +266,10 @@ export function sampleIssueWebhookPayload(type: IssueWebhookEvent = "issue.creat
     project: { id: "sample_project", name: "Origin", repoUrl: "https://github.com/z4mbo/Origin" },
     issue: {
       id: "sample_issue", key: "ORI-AB12", title: "Rough note: import issues from a CSV", description: "", labels: ["Needs spec"],
-      status: type === "issue.created" ? "Draft" : "Todo", completed: false, assignee: null, acceptanceCriteria: [],
+      ...(type === "issue.created" ? { status: "Draft", statusLabel: "Backlog", backlog: true } : { status: "Todo", statusLabel: "Todo", backlog: false }), completed: false, assignee: null, acceptanceCriteria: [],
       ...(type === "issue.delegated" ? { delegate: agent } : {}),
     },
-    changes: type === "issue.updated" ? { status: { from: "Draft", to: "Todo" } } : type === "issue.delegated" ? { delegate: { from: null, to: agent } } : null,
+    changes: type === "issue.updated" ? { status: { from: "Draft", to: "Todo" }, backlog: { from: true, to: false } } : type === "issue.delegated" ? { delegate: { from: null, to: agent } } : null,
     origin,
   });
 }

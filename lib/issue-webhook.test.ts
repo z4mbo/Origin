@@ -10,7 +10,7 @@ const input = {
   occurredAt: Date.UTC(2026, 10, 11, 9),
   workspace: { id: "team1", name: "Acme", slug: "acme" },
   project: { id: "project1", name: "Web", repoUrl: "https://github.com/acme/web.git" },
-  issue: { id: "task1", key: "ORI-AB12", title: "Import CSV", status: "Draft", completed: false },
+  issue: { id: "task1", key: "ORI-AB12", title: "Import CSV", status: "Draft", statusLabel: "Backlog", backlog: true, completed: false },
 };
 
 describe("issue webhook payload", () => {
@@ -20,7 +20,7 @@ describe("issue webhook payload", () => {
       id: "evt_1", type: "issue.created", occurredAt: "2026-11-11T09:00:00.000Z",
       workspace: { id: "team1", name: "Acme", slug: "acme" },
       project: { id: "project1", name: "Web", repo: "acme/web" },
-      issue: { id: "task1", key: "ORI-AB12", title: "Import CSV", description: "", labels: [], url: "/acme/issue/ORI-AB12", status: "Draft", completed: false, assignee: null, acceptanceCriteria: [] },
+      issue: { id: "task1", key: "ORI-AB12", title: "Import CSV", description: "", labels: [], url: "/acme/issue/ORI-AB12", status: "Draft", statusLabel: "Backlog", backlog: true, completed: false, assignee: null, acceptanceCriteria: [] },
       changes: null,
     }));
   });
@@ -37,10 +37,13 @@ describe("issue webhook payload", () => {
 
   test("issue.created never carries changes; issue.updated carries only what changed", () => {
     expect(issueWebhookPayload({ ...input, changes: { completed: { from: false, to: true } } }).changes).toBeNull();
-    expect(issueWebhookChanges({ status: "Draft", completed: false }, { status: "Todo", completed: false })).toEqual({ status: { from: "Draft", to: "Todo" } });
-    expect(issueWebhookChanges({ status: "In review", completed: false }, { status: "Done", completed: true })).toEqual({ status: { from: "In review", to: "Done" }, completed: { from: false, to: true } });
-    expect(issueWebhookChanges({ status: "Done", completed: true }, { status: "Done", completed: false })).toEqual({ completed: { from: true, to: false } });
-    expect(issueWebhookChanges({ status: "Todo", completed: false }, { status: "Todo", completed: false })).toBeNull();
+    expect(issueWebhookChanges({ status: "Draft", backlog: true, completed: false }, { status: "Todo", backlog: false, completed: false })).toEqual({ status: { from: "Draft", to: "Todo" }, backlog: { from: true, to: false } });
+    expect(issueWebhookChanges({ status: "Todo", backlog: false, completed: false }, { status: "Draft", backlog: true, completed: false })).toEqual({ status: { from: "Todo", to: "Draft" }, backlog: { from: false, to: true } });
+    expect(issueWebhookChanges({ status: "In review", backlog: false, completed: false }, { status: "Done", backlog: false, completed: true })).toEqual({ status: { from: "In review", to: "Done" }, completed: { from: false, to: true } });
+    expect(issueWebhookChanges({ status: "Done", backlog: false, completed: true }, { status: "Done", backlog: false, completed: false })).toEqual({ completed: { from: true, to: false } });
+    expect(issueWebhookChanges({ status: "Todo", backlog: false, completed: false }, { status: "Todo", backlog: false, completed: false })).toBeNull();
+    // Same title, different Backlog membership (a renamed draft column): only the flag tells them apart.
+    expect(issueWebhookChanges({ status: "Ideas", backlog: true, completed: false }, { status: "Ideas", backlog: false, completed: false })).toEqual({ backlog: { from: true, to: false } });
     const updated = issueWebhookPayload({ ...input, type: "issue.updated", changes: { status: { from: "Draft", to: "Todo" } } });
     expect(updated.changes).toEqual({ status: { from: "Draft", to: "Todo" } });
   });
@@ -78,9 +81,11 @@ describe("issue webhook signature", () => {
   test("the test script's sample matches the payload shape", () => {
     const created = sampleIssueWebhookPayload("issue.created", "http://localhost:3000");
     expect(Object.keys(created)).toEqual(["id", "type", "occurredAt", "workspace", "project", "issue", "changes"]);
-    expect(Object.keys(created.issue)).toEqual(["id", "key", "title", "description", "labels", "url", "status", "completed", "assignee", "acceptanceCriteria"]);
+    expect(Object.keys(created.issue)).toEqual(["id", "key", "title", "description", "labels", "url", "status", "statusLabel", "backlog", "completed", "assignee", "acceptanceCriteria"]);
+    expect(created.issue).toMatchObject({ status: "Draft", statusLabel: "Backlog", backlog: true });
     expect(created).toMatchObject({ type: "issue.created", changes: null, issue: { url: "http://localhost:3000/sample/issue/ORI-AB12", labels: ["Needs spec"] } });
-    expect(sampleIssueWebhookPayload("issue.updated").changes).toEqual({ status: { from: "Draft", to: "Todo" } });
+    expect(sampleIssueWebhookPayload("issue.updated").changes).toEqual({ status: { from: "Draft", to: "Todo" }, backlog: { from: true, to: false } });
+    expect(sampleIssueWebhookPayload("issue.updated").issue).toMatchObject({ status: "Todo", statusLabel: "Todo", backlog: false });
   });
 
   test("webhook URLs are http(s) without credentials", () => {

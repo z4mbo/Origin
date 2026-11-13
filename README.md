@@ -93,12 +93,20 @@ Each request has `Content-Type: application/json`, `X-Origin-Event`, `X-Origin-D
   "workspace": { "id": "…", "name": "Acme", "slug": "acme" },
   "project": { "id": "…", "name": "Web", "repo": "acme/web" },
   "issue": { "id": "…", "key": "ORI-AB12", "title": "…", "description": "", "labels": ["Needs spec"], "url": "https://origin.example.com/acme/issue/ORI-AB12",
-    "status": "Todo", "completed": false, "assignee": null, "acceptanceCriteria": [] },
-  "changes": { "status": { "from": "Draft", "to": "Todo" } }
+    "status": "Todo", "statusLabel": "Todo", "backlog": false, "completed": false, "assignee": null, "acceptanceCriteria": [] },
+  "changes": { "status": { "from": "Draft", "to": "Todo" }, "backlog": { "from": true, "to": false } }
 }
 ```
 
-`changes` is `null` for `issue.created`; for `issue.updated` it has `status` and/or `completed`, each `{ from, to }`.
+`changes` is `null` for `issue.created`; for `issue.updated` it has `status`, `backlog` and/or `completed`, each `{ from, to }`.
+
+`issue.status` is the stored column title, kept for compatibility: older boards still title their Backlog column "Draft". Use the title-independent fields instead:
+
+- `issue.backlog` (every issue event): `true` while the issue is in the board's Backlog (draft) column, whatever that column is called.
+- `issue.statusLabel` (every issue event): the column name the board shows, so a column titled "Draft" reads "Backlog".
+- `changes.backlog` (`issue.updated`): present whenever the issue enters (`{ "from": false, "to": true }`) or leaves (`{ "from": true, "to": false }`) Backlog.
+
+Recommended receiver rule: treat `issue.created` with `issue.backlog: false`, and `issue.updated` with `changes.backlog` `{ "from": true, "to": false }`, as new work; ignore events for issues with `issue.backlog: true`.
 
 ### Project events
 
