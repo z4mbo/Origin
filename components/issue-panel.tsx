@@ -8,7 +8,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { displayName, formatDateTime, formatDue, formatRelative } from "@/lib/format";
 import { taskKey } from "@/lib/project-issues";
-import { isDraftColumn } from "@/lib/origin-columns";
+import { columnLabel, isDraftColumn } from "@/lib/origin-columns";
 import { PriorityIcon, StatusIcon } from "./issue-icons";
 import { AgentMark } from "./issue-agent";
 import { UserAvatar } from "./user-avatar";
@@ -81,7 +81,7 @@ function PanelBody({ details, activity, canEdit, onOpenPage, onToggleDone }: {
 }) {
   const { task, columns, members } = details;
   const column = columns.find(item => item._id === task.columnId);
-  const statusLabel = task.done ? "Completed" : column?.title ?? "—";
+  const statusLabel = task.done ? "Completed" : column ? columnLabel(column) : "—";
   const statusIcon = task.done ? "Done" : column ? (isDraftColumn(column) ? "Draft" : column.title) : "Todo";
   const assignee = task.assignedToEmail ? members.find(member => member.email === task.assignedToEmail) ?? { email: task.assignedToEmail, name: task.assignedToName } : null;
   const due = formatDue(task.dueDate);
