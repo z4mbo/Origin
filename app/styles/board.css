@@ -80,9 +80,10 @@
   flex-direction: column;
   min-width: var(--lane-min);
   min-height: 0;
-  border: 1px solid transparent;
+  /* A filled tray with a hairline border (after the agent task board reference); cards sit a step above it. */
+  border: 1px solid var(--border-1);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+  background: var(--surface-2);
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration) var(--ease-out), min-width var(--duration-slow) var(--ease-move), flex-basis var(--duration-slow) var(--ease-move);
 }
 /* Lane colors carry meaning: grey drafts, cyan to do, amber in progress, violet in review, green done. */
@@ -97,8 +98,8 @@
 .kanban-title { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--space-2); height: 40px; padding: 0 var(--space-1) 0 var(--space-3); }
 .kanban-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .kanban-name .status-icon { color: var(--lane); }
-.kanban-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-1); font-size: var(--text-base); font-weight: var(--weight-medium); }
-.lane-count { flex: none; color: var(--text-3); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.kanban-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: var(--text-xs); font-weight: var(--weight-semibold); letter-spacing: 0.06em; text-transform: uppercase; }
+.lane-count { display: inline-grid; flex: none; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-full); background: var(--surface-4); color: var(--text-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .lane-rename { width: 100%; min-width: 0; min-height: 26px; padding: 0 6px; font-size: var(--text-base); font-weight: var(--weight-semibold); }
 .kanban-tools { display: flex; flex: none; align-items: center; gap: 0; }
 .kanban-tools .icon-button { width: 28px; min-width: 28px; height: 28px; color: var(--text-3); opacity: 0; transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast); }
@@ -136,38 +137,46 @@
   position: relative;
   display: grid;
   flex: none;
-  gap: 6px;
+  gap: 4px;
   padding: 10px var(--space-3) var(--space-2);
-  border: 1px solid var(--border-1);
+  border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.24);
+  background: var(--surface-4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   cursor: pointer;
   outline: none;
   transition: background var(--duration-instant) var(--ease-standard), border-color var(--duration-instant) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 .task-card.can-drag { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 @media (hover: hover) {
-  .task-card:hover { border-color: var(--border-2); background: var(--surface-3); }
+  .task-card:hover { border-color: var(--border-3); background: var(--surface-5); }
 }
-.task-card:active:not(:has(button:active, input:active)) { background: var(--surface-3); }
+.task-card:active:not(:has(button:active, input:active)) { background: var(--surface-5); }
 .task-card:focus-visible { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
-.task-card.is-selected, .task-card.has-menu { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-2)); background: color-mix(in srgb, var(--accent) 6%, var(--surface-3)); }
+.task-card.is-selected, .task-card.has-menu { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-2)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-4)); }
 .task-card.done .task-top strong { color: var(--text-3); }
 /* Completed cards in All issues: present, a step quieter. */
-.task-card.done:not(.is-completing) .task-meta { opacity: 0.6; }
+.task-card.done:not(.is-completing) :is(.task-foot, .task-summary) { opacity: 0.6; }
 .task-card.is-completing .task-top strong { text-decoration: line-through; text-decoration-color: var(--text-3); }
 .task-card.is-collapsing { overflow: hidden; pointer-events: none; }
-.task-card-head { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; }
-.task-code { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; color: var(--text-3); font-size: var(--text-sm); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* Card anatomy (after the agent task board reference): title row, a two-line summary, then a footer with the issue's
+   key and age on the left and its counters on the right. */
+.task-code { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-3); font-size: var(--text-xs); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.task-age { color: var(--text-3); white-space: nowrap; }
+.task-summary { display: -webkit-box; margin: 0; padding-left: 26px; overflow: hidden; color: var(--text-3); font-size: var(--text-sm); line-height: 17px; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.task-card > .task-labels, .task-card > .label-chips-button { margin-left: 26px; }
+.task-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 22px; padding-left: 26px; }
+.task-stats { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--text-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.task-stat { display: inline-flex; align-items: center; gap: 3px; }
+.task-stat.is-complete { color: var(--green); }
+.task-stats .task-chip { height: 20px; padding: 0 5px; border-color: transparent; font-size: var(--text-xs); }
+.task-stats button.task-chip:hover { border-color: var(--border-3); }
 .github-issue-indicator { display: inline-grid; color: var(--text-3); }
 .github-issue-indicator svg { width: 12px; height: 12px; }
 .github-issue-indicator[data-state="open"] { color: var(--green); }
 .github-issue-indicator[data-state="merged"] { color: var(--violet); }
-.task-top { display: flex; align-items: flex-start; gap: var(--space-2); }
-.task-top strong { flex: 1; min-width: 0; color: var(--text-1); font-size: var(--text-base); font-weight: var(--weight-medium); line-height: 20px; letter-spacing: -0.003em; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; transition: color var(--duration); }
-.task-meta { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 22px; margin-top: 2px; }
-.task-meta:empty { display: none; }
+.task-top { position: relative; display: flex; align-items: flex-start; gap: var(--space-2); }
+.task-top strong { flex: 1; min-width: 0; color: var(--text-1); font-size: var(--text-base); font-weight: var(--weight-semibold); line-height: 20px; letter-spacing: -0.003em; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; transition: color var(--duration); }
 .task-labels { display: inline-flex; min-width: 0; gap: 4px; overflow: hidden; }
 
 /* Keyboard move target: focusable while a card is moved with the keyboard, never shown. */
@@ -220,8 +229,7 @@ button.task-assignee:hover { box-shadow: 0 0 0 2px var(--border-3); color: var(-
 .task-menu-button.icon-button { width: 22px; min-width: 22px; height: 22px; margin-left: auto; color: var(--text-3); opacity: 0; transition: opacity var(--duration-instant) var(--ease-standard), background var(--duration-instant) var(--ease-standard); }
 .task-card:hover .task-menu-button, .task-card.has-menu .task-menu-button, .task-card:focus-visible .task-menu-button { opacity: 1; }
 /* With nothing else in the row, the ⋯ floats on the title row instead of adding an empty line. */
-.task-meta:has(> .task-menu-button:only-child) { position: absolute; right: 8px; bottom: 8px; margin: 0; min-height: 0; }
-@media (hover: hover) { .task-card:has(.task-meta > .task-menu-button:only-child) .task-top strong { padding-right: 18px; } }
+.task-top > .task-menu-button.icon-button { position: absolute; top: -1px; right: -4px; margin: 0; background: var(--surface-5); }
 .task-card.is-moving .task-menu-button { opacity: 0; }
 
 /* Touch: every control on a card is visible and at least 44px tall to the finger; the menu is a long-press. */

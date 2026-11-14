@@ -2,9 +2,9 @@
 
 import { memo, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import clsx from "clsx";
-import { CalendarDays, Check, MoreHorizontal, UserRound } from "lucide-react";
+import { CalendarDays, Check, ListChecks, MoreHorizontal, UserRound } from "lucide-react";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { displayName, formatDate, formatDue } from "@/lib/format";
+import { displayName, formatDate, formatDue, formatRelative } from "@/lib/format";
 import { taskKey } from "@/lib/project-issues";
 import { GitHubIssueIndicator, type LinkedPullRequest } from "./github-issue-indicator";
 import { EstimateIcon, PriorityIcon, StatusIcon } from "./issue-icons";
@@ -67,6 +67,20 @@ const tapTarget = (element: HTMLElement | null) => {
   element?.addEventListener("click", noop);
   return () => element?.removeEventListener("click", noop);
 };
+
+/** The description as one plain line for a card's two-line preview: Markdown marks, links and checkboxes stripped. */
+export function plainSummary(markdown: string | undefined) {
+  if (!markdown) return "";
+  return markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s*(?:[-*+]\s+\[[ xX]\]|[-*+]|\d+[.)]|#{1,6}|>)\s*/gm, "")
+    .replace(/[*_`~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+}
 
 const box = (element: Element): TaskMenuAnchor => { const rect = element.getBoundingClientRect(); return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }; };
 const openChip = (task: Task, view: TaskMenuView, onMenu: OnMenu) => (event: ReactMouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onMenu(task, view, box(event.currentTarget), event.currentTarget); };
@@ -151,6 +165,8 @@ export function AssigneeChip({ task, assignee, canEdit, onMenu, withName = false
 export const IssueCard = memo(function IssueCard({ task, pullRequest, assignee, canEdit, tabStop, selected, completing, dragState, keyboardMoving, menuOpen, onOpen, onComplete, reopen = false, onMenu, onDueDate, onLabels, onKeyDown, onFocus, onPointerDown, onHandleKeyDown, onHandleClick, onHandleBlur, properties }: IssueCardProps) {
   const key = taskKey(task._id);
   const done = task.done || Boolean(completing);
+  const summary = plainSummary(task.description);
+  const criteria = task.acceptanceCriteria?.length ? { done: task.acceptanceCriteria.filter(item => item.checked).length, total: task.acceptanceCriteria.length } : null;
   return (
     <article
       className={clsx("task-card", canEdit && "can-drag", done && "done", selected && "is-selected", menuOpen && "has-menu",
@@ -172,22 +188,30 @@ export const IssueCard = memo(function IssueCard({ task, pullRequest, assignee, 
         onMenu(task, "root", pointAt(event), event.currentTarget);
       }}
     >
-      <div className="task-card-head">
-        <span className="task-code issue-key" ref={tapTarget}>{shows(properties, "id") && key}{shows(properties, "pullRequest") && <GitHubIssueIndicator number={task.githubIssueNumber} pullRequest={pullRequest} />}</span>
-        {canEdit && <button className="drag-handle" type="button" tabIndex={-1} aria-label={`Move ${task.title}`} aria-pressed={keyboardMoving} onKeyDown={event => onHandleKeyDown(event, task._id)} onClick={event => onHandleClick(event, task._id)} onBlur={() => onHandleBlur(task._id)} />}
-        {shows(properties, "assignee") && <AssigneeChip task={task} assignee={assignee} canEdit={canEdit} onMenu={onMenu} />}
-      </div>
+      {/* Title row: the complete control where the reference puts the agent glyph, then the title. */}
       <div className="task-top">
         <CompleteCheck task={task} done={done} canEdit={canEdit} onComplete={onComplete} reopen={reopen} tabbable={false} />
         <strong ref={tapTarget}>{task.title}</strong>
-      </div>
-      <div className="task-meta">
-        {shows(properties, "priority") && <PriorityChip task={task} canEdit={canEdit} onMenu={onMenu} iconOnly />}
-        {shows(properties, "estimate") && <EstimateChip task={task} canEdit={canEdit} onMenu={onMenu} />}
-        {shows(properties, "dueDate") && <DueChip task={task} canEdit={canEdit} onDueDate={onDueDate} />}
-        {shows(properties, "labels") && <LabelsChip task={task} canEdit={canEdit} onLabels={onLabels} max={3} className="task-labels" />}
-        {shows(properties, "created") && <span className="task-created">{formatDate(task.createdAt)}</span>}
+        {canEdit && <button className="drag-handle" type="button" tabIndex={-1} aria-label={`Move ${task.title}`} aria-pressed={keyboardMoving} onKeyDown={event => onHandleKeyDown(event, task._id)} onClick={event => onHandleClick(event, task._id)} onBlur={() => onHandleBlur(task._id)} />}
         {canEdit && <button type="button" tabIndex={-1} className="icon-button task-menu-button task-actions" aria-label={`Issue options for ${task.title}`} aria-haspopup="menu" aria-expanded={menuOpen} onClick={event => { event.stopPropagation(); onMenu(task, "root", box(event.currentTarget), event.currentTarget); }}><MoreHorizontal size={14} /></button>}
+      </div>
+      {summary && <p className="task-summary">{summary}</p>}
+      {shows(properties, "labels") && <LabelsChip task={task} canEdit={canEdit} onLabels={onLabels} max={3} className="task-labels" />}
+      {/* Footer: what state it is in and since when on the left, its quiet counters on the right. */}
+      <div className="task-foot">
+        <span className="task-code issue-key" ref={tapTarget}>
+          {shows(properties, "id") && key}
+          <span className="task-age" title={`Updated ${new Date(task.updatedAt).toLocaleString()}`}>{formatRelative(task.updatedAt)}</span>
+        </span>
+        <span className="task-stats">
+          {criteria && <span className={clsx("task-stat", criteria.done === criteria.total && "is-complete")} title={`${criteria.done} of ${criteria.total} acceptance criteria met`}><ListChecks size={12} />{criteria.done}/{criteria.total}</span>}
+          {shows(properties, "pullRequest") && <GitHubIssueIndicator number={task.githubIssueNumber} pullRequest={pullRequest} />}
+          {shows(properties, "estimate") && <EstimateChip task={task} canEdit={canEdit} onMenu={onMenu} />}
+          {shows(properties, "dueDate") && <DueChip task={task} canEdit={canEdit} onDueDate={onDueDate} />}
+          {shows(properties, "created") && <span className="task-created">{formatDate(task.createdAt)}</span>}
+          {shows(properties, "priority") && <PriorityChip task={task} canEdit={canEdit} onMenu={onMenu} iconOnly />}
+          {shows(properties, "assignee") && <AssigneeChip task={task} assignee={assignee} canEdit={canEdit} onMenu={onMenu} />}
+        </span>
       </div>
     </article>
   );

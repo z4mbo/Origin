@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
 import clsx from "clsx";
-import { ArrowRight, Check, CheckCircle2, Circle, Columns3, List, MoreHorizontal, PencilLine, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Circle, Columns3, List, MoreHorizontal, PanelRightOpen, PencilLine, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { formatDate } from "@/lib/format";
@@ -23,6 +23,7 @@ import { isSheetLayout } from "./use-anchored-popover";
 import { compareTaskOrder, planTaskMove } from "../lib/task-order";
 import { RECONNECT_TO_CREATE, useWorkspaceOnline } from "./workspace-connection";
 import { IssueComposer, TaskModal } from "./lazy-views";
+import { IssuePanel } from "./issue-panel";
 import { IssueDeleteDialog, IssueToastHost, dismissIssueToast, showIssueToast, subscribeCreatedIssue, type OpenReference, type ProjectWithUi } from "./issue-shared";
 import { IssueSelect } from "./issue-select";
 import { DelayedSkeleton } from "./delayed-skeleton";
@@ -196,8 +197,21 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     window.history.pushState({ originIssue: taskId }, "", url);
     pushedIssue.current = taskId;
   };
-  /** Click and Enter open the issue's page; Space (list rows) peeks at it over the list. */
-  const openIssuePage = (taskId: Id<"tasks">) => { if (navigation) navigation.openIssue(projectId, taskId); else openTask(taskId); };
+  /** The issue's own page (the panel's Open, and every click on a narrow screen). */
+  const openFullPage = (taskId: Id<"tasks">) => { if (navigation) navigation.openIssue(projectId, taskId); else openTask(taskId); };
+  // The side panel: issues opened from the board stay open as tabs next to it until closed (at most 8, oldest dropped).
+  const [panel, setPanel] = useState<{ tabs: Id<"tasks">[]; active: Id<"tasks"> | null; open: boolean }>({ tabs: [], active: null, open: false });
+  /** Click and Enter open the issue in the side panel (its page on narrow screens); Space (list rows) peeks at it. */
+  const openIssuePage = (taskId: Id<"tasks">) => {
+    if (window.matchMedia("(max-width: 900px)").matches) { openFullPage(taskId); return; }
+    setPanel(current => ({ tabs: current.tabs.includes(taskId) ? current.tabs : [...current.tabs, taskId].slice(-8), active: taskId, open: true }));
+  };
+  const closePanelTab = (taskId: Id<"tasks">) => setPanel(current => {
+    const index = current.tabs.indexOf(taskId);
+    const tabs = current.tabs.filter(id => id !== taskId);
+    const active = current.active === taskId ? tabs[Math.max(0, index - 1)] ?? null : current.active;
+    return { tabs, active, open: current.open && tabs.length > 0 };
+  });
   const closeTask = (refocus = true) => {
     const closing = selectedTaskId;
     if (closing && pushedIssue.current === closing && window.history.state?.originIssue === closing) window.history.back();
@@ -390,6 +404,9 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
   useEffect(() => () => press.current?.(), []);
 
   if (!board) return <DelayedSkeleton kind="board" label="Loading board" />;
+  // Panel tabs follow the board: a deleted issue drops out of them.
+  const panelTabs = panel.tabs.flatMap(id => { const item = board.tasks.find(row => row._id === id); return item ? [{ id, title: item.title }] : []; });
+  const panelShown = panel.open && panel.active !== null && panelTabs.some(tab => tab.id === panel.active);
 
   const people = new Map<string, CardPerson>();
   for (const person of [...(board.assignees || []), ...(projectMembers || [])]) people.set(person.email, { email: person.email, name: person.name, username: person.username, avatarUrl: person.avatarUrl });
@@ -627,6 +644,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     <div className="board-header">
       {tabs}
       <div className="board-header-actions">
+        {!panelShown && panelTabs.length > 0 && <button type="button" className="icon-button" aria-label={`Show issue panel (${panelTabs.length} open)`} title="Show issue panel" onClick={() => setPanel(current => ({ ...current, active: current.active ?? current.tabs.at(-1) ?? null, open: true }))}><PanelRightOpen size={14} /></button>}
         <div className="board-filter-control" ref={filterBox}>
           {filter && !filterOpen
             ? <span className="board-search-chip"><button type="button" aria-label={`Search: ${filter}`} onClick={() => setFilterOpen(true)}><Search size={13} /><span>{filter}</span></button><button type="button" aria-label="Clear search" onClick={() => { setFilter(""); filterButton.current?.focus(); }}><X size={13} /></button></span>
@@ -652,7 +670,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
       {!archivedTasks.length && <EmptyBlock icon={CheckCircle2} title={filtered ? "No matching issues" : "No completed issues"} body={filtered ? "Change the search or filters to see more." : "Finish something first."} />}
       {archivedTasks.map(task => <div
         key={task._id}
-        className={clsx("archive-row", canEdit && "can-press", selectedTaskId === task._id && "is-selected", menu?.taskId === task._id && "has-menu")}
+        className={clsx("archive-row", canEdit && "can-press", (selectedTaskId === task._id || (panelShown && panel.active === task._id)) && "is-selected", menu?.taskId === task._id && "has-menu")}
         data-task-id={task._id}
         tabIndex={tabStopId === task._id ? 0 : -1}
         aria-label={`${taskKey(task._id)} ${task.title}`}
@@ -696,7 +714,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
               properties={properties}
               canEdit={canEdit}
               tabStop={tabStopId === task._id}
-              selected={selectedTaskId === task._id}
+              selected={selectedTaskId === task._id || (panelShown && panel.active === task._id)}
               completing={completing[task._id]}
               menuOpen={menu?.taskId === task._id}
               reopen={canEdit && task.done}
@@ -779,7 +797,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
                     assignee={assigneeOf(task)}
                     canEdit={canEdit}
                     tabStop={tabStopId === task._id}
-                    selected={selectedTaskId === task._id}
+                    selected={selectedTaskId === task._id || (panelShown && panel.active === task._id)}
                     completing={completing[task._id]}
                     dragState={drag?.taskId === task._id ? (drag.mode === "pointer" ? "placeholder" : "moving") : undefined}
                     keyboardMoving={drag?.mode === "keyboard" && drag.taskId === task._id}
@@ -819,7 +837,21 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
       {toolbar}
       {!canEdit ? <div className="notice">View only</div> : null}
       {boardNotice ? <div className="notice danger" role="alert">{boardNotice}<button className="icon-button" aria-label="Dismiss" onClick={() => setBoardNotice("")}><X size={14} /></button></div> : null}
-      {archive ? archiveView : layout === "list" ? listView : boardView}
+      <div className={clsx("issues-with-panel", panelShown && "has-panel")}>
+        <div className="issues-main">{archive ? archiveView : layout === "list" ? listView : boardView}</div>
+        {panelShown && panel.active && <IssuePanel
+          projectId={projectId}
+          sessionToken={sessionToken}
+          tabs={panelTabs}
+          active={panel.active}
+          canEdit={canEdit}
+          onSelect={taskId => setPanel(current => ({ ...current, active: taskId }))}
+          onCloseTab={closePanelTab}
+          onHide={() => setPanel(current => ({ ...current, open: false }))}
+          onOpenPage={openFullPage}
+          onToggleDone={task => { const item = board?.tasks.find(row => row._id === task._id); if (item) toggleDone(item); }}
+        />}
+      </div>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{dnd.announcement}</div>
       {menu && menuTask && <TaskMenu
         key={`${menu.taskId}:${menu.view}`}
