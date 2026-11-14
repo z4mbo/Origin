@@ -80,9 +80,10 @@
   flex-direction: column;
   min-width: var(--lane-min);
   min-height: 0;
-  border: 1px solid transparent;
+  /* A filled tray with a hairline border (after the agent task board reference); cards sit a step above it. */
+  border: 1px solid var(--border-1);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+  background: var(--surface-2);
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration) var(--ease-out), min-width var(--duration-slow) var(--ease-move), flex-basis var(--duration-slow) var(--ease-move);
 }
 /* Lane colors carry meaning: grey drafts, cyan to do, amber in progress, violet in review, green done. */
@@ -138,21 +139,21 @@
   flex: none;
   gap: 4px;
   padding: 10px var(--space-3) var(--space-2);
-  border: 1px solid var(--border-1);
+  border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.24);
+  background: var(--surface-4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   cursor: pointer;
   outline: none;
   transition: background var(--duration-instant) var(--ease-standard), border-color var(--duration-instant) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 .task-card.can-drag { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 @media (hover: hover) {
-  .task-card:hover { border-color: var(--border-2); background: var(--surface-3); }
+  .task-card:hover { border-color: var(--border-3); background: var(--surface-5); }
 }
-.task-card:active:not(:has(button:active, input:active)) { background: var(--surface-3); }
+.task-card:active:not(:has(button:active, input:active)) { background: var(--surface-5); }
 .task-card:focus-visible { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
-.task-card.is-selected, .task-card.has-menu { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-2)); background: color-mix(in srgb, var(--accent) 6%, var(--surface-3)); }
+.task-card.is-selected, .task-card.has-menu { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-2)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-4)); }
 .task-card.done .task-top strong { color: var(--text-3); }
 /* Completed cards in All issues: present, a step quieter. */
 .task-card.done:not(.is-completing) :is(.task-foot, .task-summary) { opacity: 0.6; }
@@ -228,7 +229,7 @@ button.task-assignee:hover { box-shadow: 0 0 0 2px var(--border-3); color: var(-
 .task-menu-button.icon-button { width: 22px; min-width: 22px; height: 22px; margin-left: auto; color: var(--text-3); opacity: 0; transition: opacity var(--duration-instant) var(--ease-standard), background var(--duration-instant) var(--ease-standard); }
 .task-card:hover .task-menu-button, .task-card.has-menu .task-menu-button, .task-card:focus-visible .task-menu-button { opacity: 1; }
 /* With nothing else in the row, the ⋯ floats on the title row instead of adding an empty line. */
-.task-top > .task-menu-button.icon-button { position: absolute; top: -1px; right: -4px; margin: 0; background: var(--surface-3); }
+.task-top > .task-menu-button.icon-button { position: absolute; top: -1px; right: -4px; margin: 0; background: var(--surface-5); }
 .task-card.is-moving .task-menu-button { opacity: 0; }
 
 /* Touch: every control on a card is visible and at least 44px tall to the finger; the menu is a long-press. */
