@@ -452,3 +452,7 @@ button.task-assignee.with-name:hover { box-shadow: none; border-color: var(--bor
 .status-icon.review { color: var(--violet); }
 .status-icon.done { color: var(--green); }
 .status-icon.custom { color: var(--text-2); }
+
+/* A view replacing another (board ⇄ list, Completed) fades in; its rows rise in from components/motion-layer.tsx. */
+.issue-table-scroll, .archive-list { animation: o-fade 200ms var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .issue-table-scroll, .archive-list { animation: none; } }

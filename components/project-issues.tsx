@@ -16,7 +16,7 @@ import { MenuScrim, TaskMenu, type TaskMenuAnchor, type TaskMenuView } from "./t
 import { IssueCard, IssueRow, type CardPerson } from "./issue-card";
 import { DatePopover } from "./date-picker";
 import { Dialog } from "./dialog";
-import { EstimateIcon, StatusIcon, laneTone } from "./issue-icons";
+import { StatusIcon, laneTone } from "./issue-icons";
 import { useBoardScroll } from "./use-board-scroll";
 import { swallowNextClick, useCardFlip, useIssueDrag } from "./use-issue-drag";
 import { isSheetLayout } from "./use-anchored-popover";
@@ -32,7 +32,6 @@ import { DisplayOptions, FilterChips, FilterMenu, filterSources, type PopoverOpe
 import { useIssueNavigation } from "./issue-navigation";
 import { LabelPopover, useWorkspaceLabels } from "./issue-labels";
 import { suggestLabels } from "@/lib/command-menu";
-import { totalEstimate } from "@/lib/estimates";
 
 type Task = Doc<"tasks">;
 type Column = Doc<"columns">;
@@ -692,15 +691,15 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
     </div>
   );
 
-  const columnCount = 1 + (["status", "priority", "estimate", "assignee", "dueDate", "created"] as const).filter(property => properties.has(property)).length;
+  const columnCount = 1 + (["status", "priority", "assignee", "dueDate", "created"] as const).filter(property => properties.has(property)).length;
   const listView = (
     <div className="issue-table-scroll">
       <table className="issue-table">
         <caption className="sr-only">{ISSUE_TABS.find(item => item.value === view.tab)!.label}</caption>
-        <thead><tr><th scope="col">Issue</th>{properties.has("status") && <th scope="col" className="col-status">Status</th>}{properties.has("priority") && <th scope="col" className="col-priority">Priority</th>}{properties.has("estimate") && <th scope="col" className="col-estimate">Estimate</th>}{properties.has("assignee") && <th scope="col" className="col-assignee">Assignee</th>}{properties.has("dueDate") && <th scope="col" className="col-due">Due</th>}{properties.has("created") && <th scope="col" className="col-created">Created</th>}</tr></thead>
+        <thead><tr><th scope="col">Issue</th>{properties.has("status") && <th scope="col" className="col-status">Status</th>}{properties.has("priority") && <th scope="col" className="col-priority">Priority</th>}{properties.has("assignee") && <th scope="col" className="col-assignee">Assignee</th>}{properties.has("dueDate") && <th scope="col" className="col-due">Due</th>}{properties.has("created") && <th scope="col" className="col-created">Created</th>}</tr></thead>
         {listGroups.map(group => <Fragment key={group.key || "none"}>
           {view.grouping !== "none" && <tbody className="issue-group"><tr className="issue-group-row"><th scope="rowgroup" colSpan={columnCount}>
-            <div className="issue-group-head"><span>{view.grouping === "status" && <StatusIcon title={isDraftColumn(laneColumns.find(column => column._id === group.key) ?? { title: group.title }) ? "Draft" : group.title} />}<strong>{group.title}</strong><small>{group.tasks.length}</small>{properties.has("estimate") && totalEstimate(group.tasks) > 0 && <small className="lane-estimate" title={`${totalEstimate(group.tasks)} points`}><EstimateIcon />{totalEstimate(group.tasks)}</small>}</span>
+            <div className="issue-group-head"><span>{view.grouping === "status" && <StatusIcon title={isDraftColumn(laneColumns.find(column => column._id === group.key) ?? { title: group.title }) ? "Draft" : group.title} />}<strong>{group.title}</strong><small>{group.tasks.length}</small></span>
             {canEdit && online && view.grouping === "status" && <button type="button" className="icon-button" aria-label={`Add issue to ${group.title}`} onClick={() => setLaneCreate(group.key as Id<"columns">)}><Plus size={14} /></button>}</div>
           </th></tr></tbody>}
           <tbody>{group.tasks.map(task => {
@@ -779,7 +778,6 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
                       ? <input className="lane-rename" autoFocus defaultValue={column.title} maxLength={60} aria-label="Column name" onFocus={event => event.currentTarget.select()} onBlur={event => void renameColumn(column, event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setRenaming(null); } }} />
                       : <strong>{column.title}</strong>}
                     <span className="lane-count">{tasks.filter(task => !completing[task._id]).length}</span>
-                    {properties.has("estimate") && totalEstimate(tasks) > 0 && <span className="lane-estimate" title={`${totalEstimate(tasks)} points`}><EstimateIcon />{totalEstimate(tasks)}</span>}
                   </div>
                   {canEdit && <div className="kanban-tools">
                     <button className="icon-button" aria-label={`Add issue to ${column.title}`} title={!online ? RECONNECT_TO_CREATE : undefined} disabled={!online} onClick={() => setLaneCreate(column._id)}><Plus size={15} /></button>
@@ -865,9 +863,7 @@ export function BoardTab({ project, projectId, sessionToken, canEdit, userEmail,
         members={projectMembers ?? [...people.values()]}
         currentEmail={userEmail}
         dueDate={menuTask.dueDate}
-        estimate={menuTask.estimate}
         labelCount={menuTask.labels?.length ?? 0}
-        onEstimate={estimate => { if (estimate !== (menuTask.estimate ?? null)) void update(menuTask._id, { estimate }); }}
         onLabels={() => {
           const taskId = menuTask._id;
           requestAnimationFrame(() => requestAnimationFrame(() => {

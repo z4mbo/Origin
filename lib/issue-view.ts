@@ -7,8 +7,8 @@ import { isDoneColumn, normalizedColumnTitle } from "./origin-columns";
 export type Priority = "low" | "medium" | "high";
 export type IssueLayout = "board" | "list";
 export type IssueGrouping = "status" | "priority" | "assignee" | "label" | "none";
-export type IssueOrdering = "manual" | "priority" | "estimate" | "dueDate" | "created" | "updated" | "title";
-export type DisplayProperty = "id" | "status" | "priority" | "assignee" | "labels" | "estimate" | "dueDate" | "pullRequest" | "created";
+export type IssueOrdering = "manual" | "priority" | "dueDate" | "created" | "updated" | "title";
+export type DisplayProperty = "id" | "status" | "priority" | "assignee" | "labels" | "dueDate" | "pullRequest" | "created";
 export type IssueFilters = { statuses: string[]; priorities: Priority[]; assignees: string[]; labels: string[] };
 /**
  * The project's issue views, as Linear's team pages: All issues, Active, Backlog and Completed. Origin keeps its own
@@ -81,15 +81,16 @@ export const GROUPINGS: { value: IssueGrouping; label: string }[] = [
   { value: "status", label: "Status" }, { value: "priority", label: "Priority" }, { value: "assignee", label: "Assignee" }, { value: "label", label: "Label" }, { value: "none", label: "No grouping" },
 ];
 export const ORDERINGS: { value: IssueOrdering; label: string }[] = [
-  { value: "manual", label: "Manual" }, { value: "priority", label: "Priority" }, { value: "estimate", label: "Estimate" }, { value: "dueDate", label: "Due date" }, { value: "created", label: "Created" }, { value: "updated", label: "Updated" }, { value: "title", label: "Title" },
+  { value: "manual", label: "Manual" }, { value: "priority", label: "Priority" }, { value: "dueDate", label: "Due date" }, { value: "created", label: "Created" }, { value: "updated", label: "Updated" }, { value: "title", label: "Title" },
 ];
 export const DISPLAY_PROPERTIES: { value: DisplayProperty; label: string }[] = [
   { value: "id", label: "ID" }, { value: "status", label: "Status" }, { value: "assignee", label: "Assignee" }, { value: "priority", label: "Priority" },
-  { value: "estimate", label: "Estimate" }, { value: "dueDate", label: "Due date" }, { value: "labels", label: "Labels" }, { value: "pullRequest", label: "Pull requests" }, { value: "created", label: "Created" },
+  { value: "dueDate", label: "Due date" }, { value: "labels", label: "Labels" }, { value: "pullRequest", label: "Pull requests" }, { value: "created", label: "Created" },
 ];
 /** Version of the stored view; properties added since a stored version are switched on when it is read. */
 export const VIEW_VERSION = 2;
-const ADDED_PROPERTIES: Record<number, DisplayProperty[]> = { 2: ["estimate"] };
+// Version 2 added "estimate", since removed (2026-11-14); reading a stored view drops it as an unknown property.
+const ADDED_PROPERTIES: Record<number, DisplayProperty[]> = {};
 export const PRIORITY_ORDER: Priority[] = ["high", "medium", "low"];
 export const UNASSIGNED = "";
 export const NO_LABEL = "";
@@ -98,7 +99,7 @@ export const DEFAULT_VIEW: IssueViewState = {
   version: 2,
   tab: "active",
   layout: "board", grouping: "status", ordering: "manual", showEmptyGroups: false, showSubIssues: true,
-  properties: ["id", "status", "priority", "assignee", "estimate", "dueDate", "labels", "pullRequest"],
+  properties: ["id", "status", "priority", "assignee", "dueDate", "labels", "pullRequest"],
   filters: { statuses: [], priorities: [], assignees: [], labels: [] },
 };
 
@@ -163,8 +164,6 @@ export function sortIssues<T extends ViewTask>(tasks: readonly T[], ordering: Is
   const compare: Record<IssueOrdering, (a: T, b: T) => number> = {
     manual,
     priority: (a, b) => rank(a.priority) - rank(b.priority) || manual(a, b),
-    // Largest first; issues without an estimate go last.
-    estimate: (a, b) => (b.estimate ?? -1) - (a.estimate ?? -1) || manual(a, b),
     // Issues without a due date go last.
     dueDate: (a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") || manual(a, b),
     created: (a, b) => b.createdAt - a.createdAt,

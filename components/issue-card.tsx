@@ -7,8 +7,7 @@ import type { Doc } from "@/convex/_generated/dataModel";
 import { displayName, formatDate, formatDue, formatRelative } from "@/lib/format";
 import { taskKey } from "@/lib/project-issues";
 import { GitHubIssueIndicator, type LinkedPullRequest } from "./github-issue-indicator";
-import { EstimateIcon, PriorityIcon, StatusIcon } from "./issue-icons";
-import { estimateLabel, isEstimate } from "@/lib/estimates";
+import { PriorityIcon, StatusIcon } from "./issue-icons";
 import { UserAvatar } from "./user-avatar";
 import { AgentMark } from "./issue-agent";
 import type { TaskMenuAnchor, TaskMenuView } from "./task-actions-menu";
@@ -114,17 +113,6 @@ export function PriorityChip({ task, canEdit, onMenu, iconOnly = false }: { task
     : <span className={className} title={iconOnly ? `Priority: ${label}` : undefined} aria-label={iconOnly ? `Priority: ${label}` : undefined}>{content}</span>;
 }
 
-/** Estimate in points; `empty` shows a quiet button when the issue has none (list rows). */
-export function EstimateChip({ task, canEdit, onMenu, empty = false }: { task: Task; canEdit: boolean; onMenu: OnMenu; empty?: boolean }) {
-  const value = isEstimate(task.estimate) ? task.estimate : undefined;
-  if (value === undefined && !(empty && canEdit)) return null;
-  const label = value === undefined ? "No estimate" : estimateLabel(value);
-  const content = <><EstimateIcon empty={value === undefined} />{value !== undefined && <span>{value}</span>}</>;
-  return canEdit
-    ? <button type="button" tabIndex={-1} className={clsx("task-chip estimate-chip", value === undefined && "is-empty")} aria-label={`Estimate: ${label}`} title={label} aria-haspopup="menu" onClick={openChip(task, "estimate", onMenu)}>{content}</button>
-    : <span className="task-chip estimate-chip" title={label}>{content}</span>;
-}
-
 /** The issue's labels; a button that opens the label picker where the issue can be edited. */
 export function LabelsChip({ task, canEdit, onLabels, max, className }: { task: Task; canEdit: boolean; onLabels?: OnLabels; max: number; className: string }) {
   if (!task.labels?.length) return null;
@@ -206,7 +194,6 @@ export const IssueCard = memo(function IssueCard({ task, pullRequest, assignee, 
         <span className="task-stats">
           {criteria && <span className={clsx("task-stat", criteria.done === criteria.total && "is-complete")} title={`${criteria.done} of ${criteria.total} acceptance criteria met`}><ListChecks size={12} />{criteria.done}/{criteria.total}</span>}
           {shows(properties, "pullRequest") && <GitHubIssueIndicator number={task.githubIssueNumber} pullRequest={pullRequest} />}
-          {shows(properties, "estimate") && <EstimateChip task={task} canEdit={canEdit} onMenu={onMenu} />}
           {shows(properties, "dueDate") && <DueChip task={task} canEdit={canEdit} onDueDate={onDueDate} />}
           {shows(properties, "created") && <span className="task-created">{formatDate(task.createdAt)}</span>}
           {shows(properties, "priority") && <PriorityChip task={task} canEdit={canEdit} onMenu={onMenu} iconOnly />}
@@ -247,7 +234,6 @@ export const IssueRow = memo(function IssueRow({ task, assignee, status, canEdit
       </td>
       {shows(properties, "status") && <td className="col-status">{status && <StatusChip task={task} title={status.title} label={status.label} canEdit={canEdit} onMenu={onMenu} />}</td>}
       {shows(properties, "priority") && <td className="col-priority"><PriorityChip task={task} canEdit={canEdit} onMenu={onMenu} /></td>}
-      {shows(properties, "estimate") && <td className="col-estimate"><EstimateChip task={task} canEdit={canEdit} onMenu={onMenu} empty /></td>}
       {shows(properties, "assignee") && <td className="col-assignee"><AssigneeChip task={task} assignee={assignee} canEdit={canEdit} onMenu={onMenu} withName /></td>}
       {shows(properties, "dueDate") && <td className="col-due"><DueChip task={task} canEdit={canEdit} onDueDate={onDueDate} empty /></td>}
       {shows(properties, "created") && <td className="col-created">{formatDate(task.createdAt)}</td>}

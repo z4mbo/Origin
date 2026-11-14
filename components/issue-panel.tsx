@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
 import { CalendarDays, CircleDot, ListChecks, PanelRightClose, Tag, UserRound, X } from "lucide-react";
@@ -12,7 +12,6 @@ import { columnLabel, isDraftColumn } from "@/lib/origin-columns";
 import { PriorityIcon, StatusIcon } from "./issue-icons";
 import { AgentMark } from "./issue-agent";
 import { UserAvatar } from "./user-avatar";
-import { LoadingState } from "./issue-shared";
 import { plainSummary } from "./issue-card";
 
 type Task = Doc<"tasks">;
@@ -56,20 +55,40 @@ export function IssuePanel({ projectId, sessionToken, tabs, active, canEdit, onS
   const details = useQuery(api.tasks.details, { projectId, sessionToken, taskId: active });
   const activity = useQuery(api.issueActivity.list, { sessionToken, projectId, taskId: active }) as ActivityRow[] | undefined;
   const tabList = useRef<HTMLDivElement>(null);
+  // Closing plays the panel's collapse first; the board takes the room back as it narrows.
+  const [closing, setClosing] = useState(false);
+  const closeWith = (done: () => void) => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
+    setClosing(true);
+    window.setTimeout(done, 220);
+  };
   useEffect(() => { tabList.current?.querySelector<HTMLElement>("[aria-selected=true]")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [active]);
 
-  return <aside className="issue-panel" aria-label="Issue panel" data-issue-panel={active}>
+  return <aside className={clsx("issue-panel", closing && "is-closing")} aria-label="Issue panel" data-issue-panel={active}>
     <div className="issue-panel-tabs">
       <div ref={tabList} className="issue-panel-tablist" role="tablist" aria-label="Open issues">
         {tabs.map(tab => <div key={tab.id} className={clsx("issue-panel-tab", tab.id === active && "is-active")}>
           <button type="button" role="tab" aria-selected={tab.id === active} title={tab.title} onClick={() => onSelect(tab.id)}><CircleDot size={12} /><span>{tab.title}</span></button>
-          <button type="button" className="issue-panel-tab-close" aria-label={`Close ${tab.title}`} onClick={() => onCloseTab(tab.id)}><X size={11} /></button>
+          <button type="button" className="issue-panel-tab-close" aria-label={`Close ${tab.title}`} onClick={() => { if (tabs.length === 1) closeWith(() => onCloseTab(tab.id)); else onCloseTab(tab.id); }}><X size={11} /></button>
         </div>)}
       </div>
-      <button type="button" className="icon-button issue-panel-hide" aria-label="Hide issue panel" title="Hide panel" onClick={onHide}><PanelRightClose size={14} /></button>
+      <button type="button" className="icon-button issue-panel-hide" aria-label="Hide issue panel" title="Hide panel" onClick={() => closeWith(onHide)}><PanelRightClose size={14} /></button>
     </div>
-    {!details ? <div className="issue-panel-body"><LoadingState label="Opening issue" /></div> : <PanelBody details={details} activity={activity} canEdit={canEdit} onOpenPage={() => onOpenPage(active)} onToggleDone={onToggleDone} />}
+    {!details ? <PanelSkeleton /> : <PanelBody key={active} details={details} activity={activity} canEdit={canEdit} onOpenPage={() => onOpenPage(active)} onToggleDone={onToggleDone} />}
   </aside>;
+}
+
+/** Grey bars in the shape of the panel while the issue loads: title, summary, actions, properties and the log. */
+function PanelSkeleton() {
+  return <div className="issue-panel-body is-loading" role="status" aria-label="Opening issue">
+    <span className="skeleton-bar" style={{ width: "62%", height: 18 }} />
+    <span className="skeleton-bar" style={{ width: "22%", height: 10 }} />
+    <div className="skeleton-lines"><span className="skeleton-bar" style={{ width: "94%" }} /><span className="skeleton-bar" style={{ width: "71%" }} /></div>
+    <div className="skeleton-row"><span className="skeleton-bar" style={{ width: 76, height: 26 }} /><span className="skeleton-bar" style={{ width: 52, height: 26 }} /></div>
+    <div className="skeleton-props">{[48, 64, 40, 56].map((width, index) => <div key={index}><span className="skeleton-bar" style={{ width: 52 }} /><span className="skeleton-bar" style={{ width: `${width}%` }} /></div>)}</div>
+    <span className="skeleton-bar" style={{ width: 92, height: 10 }} />
+    <span className="skeleton-bar skeleton-box" />
+  </div>;
 }
 
 function PanelBody({ details, activity, canEdit, onOpenPage, onToggleDone }: {
@@ -111,7 +130,7 @@ function PanelBody({ details, activity, canEdit, onOpenPage, onToggleDone }: {
 
     <section className="issue-panel-log" aria-label="Activity">
       <h3>What happened <small>{activity?.length ?? 0}</small></h3>
-      {activity === undefined ? <LoadingState label="Loading activity" />
+      {activity === undefined ? <span className="skeleton-bar skeleton-box" role="status" aria-label="Loading activity" />
         : !log.length ? <p className="issue-panel-log-empty">Nothing yet</p>
           : <ol>{log.map((row, index) => <li key={row.id} className={clsx(index === log.length - 1 && "is-latest")}>
             <span className="issue-panel-log-dot" aria-hidden="true" />
