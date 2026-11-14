@@ -244,3 +244,50 @@ test('polish screenshots', async ({ clients, f }) => {
   await overlay(sheet, 'overlay-sidebar.png', 'nav-sidebar.png', 'docs-team-pages.png', { x: 4, y: 257 }, 'sidebar rows (Inbox aligned)');
   await overlay(sheet, 'overlay-pr-rows.png', 'code-pr-rows.png', 'docs-reviews-d.png', { x: 88, y: -84 }, 'Reviews rows');
 });
+
+// The board's side panel (after the agent task board reference): click opens a tab, tabs switch and close, Open goes
+// to the full page. Always runs; with ORIGIN_SHOTS_DIR it also saves panel screenshots.
+test('issue side panel', async ({ clients, f }) => {
+  test.setTimeout(120000);
+  const [, todo, progress] = f.board.columns;
+  const make = (column, title, extra = {}) => f.member.api.m('tasks:createTask', { ...f.project, columnId: column._id, title, priority: 'medium', ...extra });
+  await make(todo, 'Migrate users table', { description: 'Split users into accounts and profiles on Postgres 17. The dry run on staging passed.', priority: 'high', assignedToEmail: f.member.email });
+  await make(todo, 'Clean up CRM contacts', { description: 'Matched 1,312 likely duplicates, then the merge hit the API rate limit.' });
+  await make(progress, 'Review PR #482', { description: 'Billing webhooks: reading the diff and the test run, writing comments.', assignedToEmail: f.admin.email });
+  await make(progress, 'Release notes v2.4', { description: 'Grouping 23 merged pull requests into features and fixes.', priority: 'low' });
+
+  const page = await clients.login(f.admin, f.url());
+  await page.setViewportSize({ width: 1440, height: 860 });
+  const card = title => page.locator('.task-card').filter({ hasText: title });
+  await expect(card('Migrate users table')).toBeVisible();
+  await expect(card('Migrate users table').locator('.task-summary')).toContainText('Split users into accounts');
+  await page.mouse.move(1, 1);
+  if (shots) await shot(page, 'panel-board.png');
+
+  const panel = page.getByRole('complementary', { name: 'Issue panel' });
+  await card('Migrate users table').click();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Migrate users table' })).toBeVisible();
+  await expect(panel.getByRole('tab', { name: 'Migrate users table' })).toHaveAttribute('aria-selected', 'true');
+  await expect(card('Migrate users table')).toHaveClass(/is-selected/);
+  await card('Review PR #482').click();
+  await expect(panel.getByRole('tab')).toHaveCount(2);
+  await expect(panel.getByRole('heading', { name: 'Review PR #482' })).toBeVisible();
+  await page.mouse.move(1, 1);
+  if (shots) await shot(page, 'panel-open.png');
+
+  await panel.getByRole('tab', { name: 'Migrate users table' }).click();
+  await expect(panel.getByRole('heading', { name: 'Migrate users table' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Close Migrate users table' }).click();
+  await expect(panel.getByRole('tab')).toHaveCount(1);
+  await expect(panel.getByRole('heading', { name: 'Review PR #482' })).toBeVisible();
+
+  await panel.getByRole('button', { name: 'Hide issue panel' }).click();
+  await expect(panel).toBeHidden();
+  await page.getByRole('button', { name: /Show issue panel/ }).click();
+  await expect(panel.getByRole('heading', { name: 'Review PR #482' })).toBeVisible();
+
+  await panel.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(page.locator('[data-issue-page]').filter({ hasText: 'Review PR #482' }).first()).toBeVisible();
+  await expect(page).toHaveURL(/\/issue\//);
+});

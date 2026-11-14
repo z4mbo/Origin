@@ -114,9 +114,7 @@ span.criterion-text { cursor: default; }
 /* On a card, labels take what room is left and clip rather than widen the card. */
 .task-card { grid-template-columns: minmax(0, 1fr); }
 /* One row: labels clip before the ⋯ button would wrap onto a line of its own. */
-.task-meta { flex-wrap: nowrap; }
-.task-meta > .label-chips-button, .task-meta > .label-chips { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.task-meta > .label-chips { flex-wrap: wrap; max-width: 100%; overflow: visible; }
+.task-card > .label-chips-button, .task-card > .label-chips { justify-self: start; min-width: 0; max-width: calc(100% - 26px); overflow: hidden; }
 .issue-labels > .label-chip { gap: 6px; height: 24px; padding-right: 2px; }
 .issue-labels > .label-chip > button { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-3); }
 .issue-labels > .label-chip > button:hover { background: color-mix(in srgb, var(--label) 25%, transparent); color: var(--text-1); }
