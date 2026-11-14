@@ -258,6 +258,8 @@ test('issue side panel', async ({ clients, f }) => {
 
   const page = await clients.login(f.admin, f.url());
   await page.setViewportSize({ width: 1440, height: 860 });
+  // The harness runs with reduced motion; filming needs the real animations from the first paint.
+  if (shots) { await page.emulateMedia({ reducedMotion: 'no-preference' }); await page.reload(); }
   const card = title => page.locator('.task-card').filter({ hasText: title });
   await expect(card('Migrate users table')).toBeVisible();
   await expect(card('Migrate users table').locator('.task-summary')).toContainText('Split users into accounts');
@@ -265,7 +267,23 @@ test('issue side panel', async ({ clients, f }) => {
   if (shots) await shot(page, 'panel-board.png');
 
   const panel = page.getByRole('complementary', { name: 'Issue panel' });
-  await card('Migrate users table').click();
+  // Frames of the panel opening (widening while the board makes room, skeleton, then content), with motion allowed.
+  // Animations run 10x slower while filming, so each frame (named by animation time) shows the motion in progress.
+  const film = async (prefix, action) => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Animation.enable');
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.1 });
+    await action();
+    const start = Date.now();
+    for (const at of [30, 90, 160, 260]) {
+      await page.waitForTimeout(Math.max(0, at * 10 - (Date.now() - start)));
+      await page.screenshot({ path: resolve(shots, `${prefix}-${at}ms.png`), animations: 'allow' });
+    }
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 });
+    await page.waitForTimeout(400);
+  };
+  if (shots) await film('film-panel-open', () => card('Migrate users table').click());
+  else await card('Migrate users table').click();
   await expect(panel).toBeVisible();
   await expect(panel.getByRole('heading', { name: 'Migrate users table' })).toBeVisible();
   await expect(panel.getByRole('tab', { name: 'Migrate users table' })).toHaveAttribute('aria-selected', 'true');
@@ -285,6 +303,14 @@ test('issue side panel', async ({ clients, f }) => {
   await panel.getByRole('button', { name: 'Hide issue panel' }).click();
   await expect(panel).toBeHidden();
   await page.getByRole('button', { name: /Show issue panel/ }).click();
+  // Board to list and back: the list fades in with its rows rising, no cards flying into rows.
+  if (shots) {
+    await page.waitForTimeout(500);
+    await film('film-list', () => page.getByRole('button', { name: 'List view' }).click());
+    await expect(page.locator('.issue-table')).toBeVisible();
+    await film('film-board', () => page.getByRole('button', { name: 'Board view' }).click());
+    await expect(page.locator('.kanban-scroll')).toBeVisible();
+  }
   await expect(panel.getByRole('heading', { name: 'Review PR #482' })).toBeVisible();
 
   await panel.getByRole('button', { name: 'Open', exact: true }).click();

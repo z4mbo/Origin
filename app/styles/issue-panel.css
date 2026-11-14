@@ -17,10 +17,31 @@
   border-radius: var(--radius-lg);
   background: var(--surface-1);
   box-shadow: var(--shadow-sm);
-  animation: issue-panel-in var(--duration) var(--ease-out);
+  overflow: hidden;
+  /* Opens by widening from the right edge while the board makes room; the content fades in a beat later. */
+  animation: issue-panel-open 280ms cubic-bezier(.16, 1, .3, 1);
 }
-@keyframes issue-panel-in { from { opacity: 0; transform: translateX(12px); } }
-@media (prefers-reduced-motion: reduce) { .issue-panel { animation: none; } }
+.issue-panel > * { animation: issue-panel-content 220ms 90ms var(--ease-out) backwards; }
+.issue-panel.is-closing { animation: issue-panel-close 220ms cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
+.issue-panel.is-closing > * { animation: none; opacity: 0; transition: opacity 120ms var(--ease-standard); }
+@keyframes issue-panel-open { from { flex-basis: 0; opacity: 0; border-color: transparent; } }
+@keyframes issue-panel-close { to { flex-basis: 0; opacity: 0; margin-left: calc(var(--space-3) * -1); border-color: transparent; } }
+@keyframes issue-panel-content { from { opacity: 0; transform: translateX(8px); } }
+/* Switching tabs: the new issue's content settles in place. */
+.issue-panel-body:not(.is-loading) { animation: issue-panel-swap 200ms var(--ease-out); }
+@keyframes issue-panel-swap { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .issue-panel, .issue-panel > *, .issue-panel-body, .issue-panel.is-closing { animation: none; } }
+
+/* Loading: grey bars in the panel's own shape, with a soft shimmer. */
+.issue-panel-body.is-loading { gap: var(--space-3); }
+.skeleton-bar { display: block; height: 12px; border-radius: var(--radius-xs); background: linear-gradient(90deg, var(--surface-3) 0%, var(--surface-4) 40%, var(--surface-3) 80%); background-size: 240% 100%; animation: skeleton-shimmer 1.3s ease-in-out infinite; }
+.skeleton-lines, .skeleton-props { display: grid; gap: 8px; }
+.skeleton-props { gap: 12px; margin: var(--space-1) 0; }
+.skeleton-props > div { display: grid; grid-template-columns: 76px 1fr; align-items: center; }
+.skeleton-row { display: flex; gap: 6px; }
+.skeleton-box { width: 100%; height: 88px; border-radius: var(--radius-md); }
+@keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton-bar { animation: none; } }
 
 /* Tabs: one per open issue, the active one raised; × closes it. */
 .issue-panel-tabs { display: flex; flex: none; align-items: center; gap: var(--space-1); height: 40px; padding: 0 var(--space-1) 0 6px; border-bottom: 1px solid var(--border-1); }

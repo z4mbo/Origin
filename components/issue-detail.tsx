@@ -191,7 +191,7 @@ function TaskModalContent({
   const [fields, setFields] = useState<Fields | null>(null);
   const saved = useRef<Fields | null>(null);
   const [columnId, setColumnId] = useState<Id<"columns"> | "">("");
-  const [errors, setErrors] = useState<Partial<Record<keyof Fields | "status" | "estimate", string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof Fields | "status", string>>>({});
   const [saving, setSaving] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [titleTouched, setTitleTouched] = useState(false);
@@ -277,15 +277,6 @@ function TaskModalContent({
   const releaseHistory = useIssueHistory(taskId, projectId, () => { flush(); onClose(); }, !page);
   const closeIssue = () => { flush(); releaseHistory(); onClose(); };
 
-  const [estimate, setEstimate] = useState<number | null | undefined>(undefined);
-  const changeEstimate = async (value: number | null) => {
-    setEstimate(value);
-    setErrors(current => ({ ...current, estimate: undefined }));
-    setSaving(count => count + 1);
-    try { await updateTask({ projectId, sessionToken, taskId, estimate: value }); }
-    catch (error) { setErrors(current => ({ ...current, estimate: errorText(error, "Could not change estimate") })); }
-    finally { setEstimate(undefined); setSaving(count => count - 1); }
-  };
   const changeColumn = async (value: string) => {
     if (!canEdit || !value || value === columnId) return;
     const previous = columnId;
@@ -412,8 +403,7 @@ function TaskModalContent({
     priority={fields.priority} onPriorityChange={value => setField("priority", value)}
     assignee={fields.assignedToEmail} onAssigneeChange={value => setField("assignedToEmail", value)}
     dueDate={fields.dueDate} onDueDateChange={value => setField("dueDate", value)} done={details.task.done}
-    estimate={(estimate === undefined ? details.task.estimate : estimate) ?? undefined} onEstimateChange={value => void changeEstimate(value)}
-    errors={{ status: errors.status, estimate: errors.estimate, ...Object.fromEntries(Object.entries(FIELD_ERROR_KEY).map(([field, key]) => [key, errors[field as keyof Fields]])) }}
+    errors={{ status: errors.status, ...Object.fromEntries(Object.entries(FIELD_ERROR_KEY).map(([field, key]) => [key, errors[field as keyof Fields]])) }}
     disabled={!canEdit}>
     <div className="issue-property" data-field="agent"><span>Agent</span><div><IssueDelegate sessionToken={sessionToken} projectId={projectId} taskId={taskId} delegateId={details.task.delegateGrantId} delegateName={details.task.delegateName} disabled={!canEdit} onError={reportError} /></div></div>
     {!page && <div className="issue-property" data-field="labels"><span>Labels</span>{labelsField}</div>}

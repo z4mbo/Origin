@@ -10,7 +10,8 @@ import { canAnimateTaskExit, selectionBox } from "@/lib/workspace-motion";
  * Nothing here owns state, so removing this component only removes motion.
  */
 
-type Box = { x: number; y: number; w: number; h: number };
+/** Where a tracked element was, and what kind it was (a card and a list row of the same issue never FLIP into each other). */
+type Box = { x: number; y: number; w: number; h: number; kind?: string };
 
 const TRACKED = "[data-task-id], [data-project-id]";
 const BUMPS = ".kanban-tools > span, .nav-item small, .project-issue-count, .segmented-control button > span, .board-progress strong";
@@ -25,7 +26,7 @@ function keyOf(element: HTMLElement) {
 
 function boxOf(element: Element): Box {
   const rect = element.getBoundingClientRect();
-  return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+  return { x: rect.left, y: rect.top, w: rect.width, h: rect.height, kind: element.tagName };
 }
 
 export function MotionLayer() {
@@ -172,6 +173,9 @@ export function MotionLayer() {
       const removed: { element: HTMLElement; parent: Node }[] = [];
       let boardEntered: HTMLElement | null = null;
       const lists: [HTMLElement, string][] = [];
+      // A whole issue view (the list table or Completed) replacing the board: it enters on its own, with no FLIP from
+      // the cards it replaces (cards flying into rows read as a glitch).
+      let viewEntered = false;
       let classChanged = false;
 
       for (const record of records) {
@@ -188,6 +192,9 @@ export function MotionLayer() {
           if (node.matches(".kanban-scroll")) boardEntered = node;
           else if (!boardEntered) { const inner = node.querySelector<HTMLElement>(".kanban-scroll"); if (inner) boardEntered = inner; }
           if (node.matches(".work-issue-list, .archive-list")) lists.push([node, ":scope > *"]);
+          const table = node.matches(".issue-table-scroll") ? node : node.querySelector<HTMLElement>(".issue-table-scroll");
+          if (table) lists.push([table, ".issue-table tbody tr[data-task-id]"]);
+          if (table || node.matches(".archive-list") || node.querySelector(".archive-list")) viewEntered = true;
           const candidates = node.matches(TRACKED) ? [node, ...node.querySelectorAll<HTMLElement>(TRACKED)] : [...node.querySelectorAll<HTMLElement>(TRACKED)];
           candidates.forEach(element => { const key = keyOf(element); if (key) addedTracked.set(key, element); });
         });
@@ -208,6 +215,12 @@ export function MotionLayer() {
         return;
       }
       lists.forEach(([list, selector]) => enterList(list, selector));
+      if (viewEntered) {
+        cache.clear();
+        requestAnimationFrame(snapshot);
+        scheduleGliders();
+        return;
+      }
 
       // Cards removed while their list stays on screen: completed issues fly to the Completed control.
       // Board cards that complete collapse in place first (project-issues.tsx), so they need no exit ghost.
@@ -237,7 +250,7 @@ export function MotionLayer() {
         const previous = cache.get(key);
         // Board cards are animated by the board itself (useCardFlip), which also follows drags.
         if (previous && element.dataset.taskId && element.closest(".kanban-scroll")) return;
-        if (previous) {
+        if (previous && previous.kind === next.kind) {
           const dx = previous.x - next.x;
           const dy = previous.y - next.y;
           if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {

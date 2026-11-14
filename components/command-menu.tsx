@@ -13,14 +13,13 @@ import { issuePath } from "@/lib/issue-route";
 import { taskBranch } from "@/lib/task-branch";
 import { dueDatePresets, filterCommands, filterShortcuts, shortcutLabels, suggestLabels, type ShortcutKeys } from "@/lib/command-menu";
 import { useModalKeyboard } from "./use-modal-keyboard";
-import { EstimateIcon, PriorityIcon, StatusIcon } from "./issue-icons";
-import { ESTIMATES, estimateLabel } from "@/lib/estimates";
+import { PriorityIcon, StatusIcon } from "./issue-icons";
 import { UserAvatar } from "./user-avatar";
 import { LabelList } from "./issue-labels";
 import { useWorkspace } from "./workspace-context";
 import { showIssueToast } from "./issue-shared";
 
-export type CommandPage = "root" | "status" | "priority" | "assignee" | "labels" | "due-date" | "estimate";
+export type CommandPage = "root" | "status" | "priority" | "assignee" | "labels" | "due-date";
 export type CommandIssue = { projectId: Id<"projects">; taskId: Id<"tasks"> };
 type Item = { id: string; label: string; icon: ReactNode; group?: string; keywords?: string; shortcut?: ShortcutKeys; checked?: boolean; run: () => unknown };
 
@@ -29,7 +28,7 @@ export function Kbd({ keys }: { keys: ShortcutKeys }) {
 }
 
 const PRIORITIES = [{ value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }] as const;
-const PLACEHOLDER: Record<CommandPage, string> = { root: "Type a command or search…", status: "Change status…", priority: "Change priority…", assignee: "Assign to…", labels: "Change or add labels…", "due-date": "Change due date…", estimate: "Set estimate…" };
+const PLACEHOLDER: Record<CommandPage, string> = { root: "Type a command or search…", status: "Change status…", priority: "Change priority…", assignee: "Assign to…", labels: "Change or add labels…", "due-date": "Change due date…" };
 
 /**
  * ⌘K / Ctrl+K: Linear's command menu. With an issue in focus (the issue page, or a focused row or card) it leads with
@@ -71,7 +70,7 @@ export function CommandMenu({ sessionToken, issue, canEdit, initialPage = "root"
   const editable = Boolean(issue && canEdit && task);
   const key = issue ? taskKey(issue.taskId) : "";
   const run = (action: () => Promise<unknown>, fallback: string) => { onClose(); void action().catch(cause => showIssueToast(errorText(cause, fallback))); };
-  const update = (patch: { priority?: "low" | "medium" | "high"; assignedToEmail?: string; dueDate?: string; estimate?: number | null; done?: boolean }) => issue && run(() => updateTask({ ...issue, sessionToken, ...patch }), "Could not update issue");
+  const update = (patch: { priority?: "low" | "medium" | "high"; assignedToEmail?: string; dueDate?: string; done?: boolean }) => issue && run(() => updateTask({ ...issue, sessionToken, ...patch }), "Could not update issue");
   const copy = (text: string, done: string) => { onClose(); void navigator.clipboard.writeText(text).then(() => showIssueToast(done), () => showIssueToast("Clipboard unavailable")); };
   const go = (next: CommandPage) => () => { setError(""); setPage(next); };
 
@@ -87,7 +86,6 @@ export function CommandMenu({ sessionToken, issue, canEdit, initialPage = "root"
         { id: "priority", group: "Issue", label: "Change priority…", icon: <PriorityIcon priority={task.priority} />, shortcut: ["P"], keywords: "urgent high low", run: go("priority") },
         { id: "labels", group: "Issue", label: "Change or add labels…", icon: <Tag size={15} />, shortcut: ["L"], keywords: "tag feature bug improvement", run: go("labels") },
         { id: "due", group: "Issue", label: "Change due date…", icon: <CalendarDays size={15} />, shortcut: ["Shift", "D"], keywords: "deadline date", run: go("due-date") },
-        { id: "estimate", group: "Issue", label: "Set estimate…", icon: <EstimateIcon />, shortcut: ["Shift", "E"], keywords: "points size effort", run: go("estimate") },
       ] : []),
       ...(issue ? [
         { id: "copy-url", group: "Issue", label: "Copy issue URL", icon: <LinkIcon size={15} />, shortcut: ["Mod", "Shift", ","], keywords: "link share", run: () => copy(new URL(issuePath(workspace.slug, issue.taskId), window.location.origin).href, "Link copied") },
@@ -119,11 +117,6 @@ export function CommandMenu({ sessionToken, issue, canEdit, initialPage = "root"
         id: member.email, label: member.email === me?.email ? `${displayName(member)} (you)` : displayName(member), keywords: `${member.email} ${member.username ?? ""}`,
         icon: <UserAvatar user={member} size="small" />, checked: task.assignedToEmail === member.email, run: () => update({ assignedToEmail: member.email }),
       })),
-    ];
-  } else if (page === "estimate" && task) {
-    items = [
-      { id: "none", label: "No estimate", keywords: "clear remove", icon: <EstimateIcon empty />, checked: !task.estimate, run: () => update({ estimate: null }) },
-      ...ESTIMATES.map(value => ({ id: String(value), label: estimateLabel(value), keywords: String(value), icon: <EstimateIcon />, checked: task.estimate === value, run: () => update({ estimate: value }) })),
     ];
   } else if (page === "due-date" && task) {
     items = [
